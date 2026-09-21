@@ -22,14 +22,14 @@ from typing import Callable
 from PIL import Image
 
 from . import archive, layout_ocr, library, llm
-from .analysis import Cancelled, clear_progress, set_progress
+from .progress import Cancelled, clear_progress, set_progress
 from .db import connect
 
 PAGES_DIRNAME = "pages"
 FIGURES_DIRNAME = "figures"
 ENGINES = ("yomitoku", "vlm")
 
-# 文字を読むため解析(1024px)より大きく送る。スクリーンショットは長辺 1500px 前後で
+# 文字を読むためチャットの画像(1024px)より大きく送る。スクリーンショットは長辺 1500px 前後で
 # 本文の字が小さいため、最大 1.5 倍まで拡大してから渡す(誤読が減る)。
 _TRANSCRIBE_MAX = 2304
 _UPSCALE_MAX = 1.5
@@ -69,6 +69,26 @@ _VERTICAL = """\
 
 class TranscribeError(RuntimeError):
     pass
+
+
+# ---- LLM に渡す本文(チャット・要約・検索で共通) ----
+
+_IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_RT_RE = re.compile(r"<rt>.*?</rt>")
+_TAG_RE = re.compile(r"</?ruby>")
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
+
+
+def plain_for_llm(markdown: str) -> str:
+    """本文の Markdown を LLM に渡す形にする。
+
+    図は [図: キャプション]、ルビは落とす。本文中の見出し(## …)は【…】にする
+    (system 側の「## 本文」などの区切りと紛れないように)。
+    """
+    text = _IMAGE_REF_RE.sub(lambda m: f"[図: {m.group(1)}]" if m.group(1) else "[図]", markdown)
+    text = _RT_RE.sub("", text)
+    text = _HEADING_RE.sub(lambda m: f"【{m.group(1).strip()}】", text)
+    return _TAG_RE.sub("", text).strip()
 
 
 def prompt(writing_mode: str) -> str:

@@ -20,8 +20,8 @@ def _now() -> str:
 def scan(root: Path) -> dict:
     """本フォルダを索引化し、追加 / 更新 / 削除件数と未取り込みアーカイブ数を返す。
 
-    本フォルダが見つからなくなった作品は索引から外す(読書位置・しおりも消える)。
-    本フォルダ方式より前(ルート配下の zip を直接登録していた頃)の作品には触れない。
+    本フォルダが見つからなくなった本は索引から外す(読書位置・しおりも消える)。
+    本フォルダ方式より前(ルート配下の zip を直接登録していた頃)の本には触れない。
     """
     added = 0
     updated = 0
@@ -60,8 +60,8 @@ def scan(root: Path) -> dict:
                     (rel, title, author, writing_mode, pages, fid),
                 )
                 updated += 1
-            # 検索インデックス(タイトル + 既存の解析)を更新。
-            search.update_index(conn, fid)
+            # 検索の索引(書名・著者・要約・本文)を更新。
+            search.update_index(conn, root, fid)
 
         removed = 0
         prefix = f"%/{library.SOURCE_DIRNAME}/%"

@@ -73,7 +73,7 @@
 
 ### ライブラリ
 - 本の取り込み(ファイル選択 / ドラッグ&ドロップ / 管理ルート内の未取り込みファイル)
-- サムネイル付き一覧、タイトル・あらすじ・ページ内容の横断検索(FTS5)
+- サムネイル付き一覧、書名・著者・章の要約・本文の横断検索(FTS5。文字起こし・要約のたびに索引を更新)
 - 既読状態・タグでの絞り込み、並び替え(タイトル / 追加順 / 最近開いた順 / 手動ドラッグ)
 - 本ごとのメニューから文字起こし・章立てと要約・名前の変更(本フォルダ名も追従)・削除(本フォルダをごみ箱へ移動)
 - 管理ルートは最近開いた履歴から選び直せる。前回のルートと最後に開いていた本は起動時に復元される
@@ -202,7 +202,10 @@ cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 8771
 src/main/        Electron メインプロセス(ウィンドウ、Python 起動・死活監視)
 src/preload/     contextBridge による IPC 公開
 src/renderer/    React UI(一覧 / リーダー / 取り込みダイアログ)
-backend/app/     FastAPI(library / scanner / archive / db / analysis / llm / routers)
+backend/app/     FastAPI。主なモジュール:
+                   library(本フォルダ・取り込み)/ scanner / archive / db / search(全文検索)
+                   transcribe・layout_ocr(文字起こし)/ structure(章立てと要約)
+                   embedding(本文検索)/ chat / jobs(ジョブキュー)/ llm・llm_server / routers
 models/          GGUF モデル(git 管理外)
 vendor/          llama.cpp 等の外部バイナリ(git 管理外)
 data/            実行時生成物・設定(git 管理外)

@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { join, dirname } from 'path'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 
-/** アプリ全体の既定設定。作品ごとの上書きは DB 側(page_direction)で持つ。 */
+/** アプリ全体の既定設定。本ごとの上書きは DB 側(page_direction)で持つ。 */
 export interface AppSettings {
   /** 表示モード: 単ページ / 見開き2ページ */
   pageMode: 'single' | 'double'
@@ -10,13 +10,13 @@ export interface AppSettings {
   singleWhenLandscape: boolean
   /** 見開き時、最初のページ(表紙)を単独表示する(ペアを1つずらす) */
   coverAlone: boolean
-  /** 既定の読み進め方向(漫画は右→左が一般的) */
+  /** 既定の読み進め方向(縦書きの本や漫画は右→左) */
   defaultDirection: 'rtl' | 'ltr'
   /** ページめくりエフェクト */
   pageTransition: 'none' | 'slide' | 'fade'
   /** 最近開いた管理ルート(先頭が最新)。起動時の自動復元にも使う */
   recentRoots: string[]
-  /** 最後に開いていた作品 ID。起動時にその作品を自動で開く(ページ位置は DB 側で復元) */
+  /** 最後に開いていた本 ID。起動時にその本を自動で開く(ページ位置は DB 側で復元) */
   lastWorkId: string | null
   /** 文字起こしのエンジン(yomitoku: 文書 OCR / vlm: 読み込み済みの Vision LLM) */
   transcribeEngine: 'yomitoku' | 'vlm'
@@ -26,26 +26,12 @@ export interface AppSettings {
     baseUrl: string
     /** モデル名(llama-server では任意) */
     model: string
-    /** 解析する代表ページ数 */
-    samplePages: number
     /** llama-server 実行ファイルのパス(空なら vendor/llama_cpp から自動検出) */
     serverPath: string
     /** GGUF モデルを探すフォルダ(空ならプロジェクト直下の models/) */
     modelsDir: string
     /** コンテキスト長 */
     ctxSize: number
-    /** ページ解析にシステムプロンプトを使うか */
-    systemPromptEnabled: boolean
-    /** システムプロンプト本文 */
-    systemPrompt: string
-    /** 前ページの説明を文脈として参照するか */
-    usePageContext: boolean
-    /** 参照する直前ページ数 */
-    pageContextCount: number
-    /** 物語の状態(あらすじ+登場人物)を走行更新して文脈に使うか */
-    useStorySummary: boolean
-    /** 物語の状態を更新する間隔(ページ数 M) */
-    storySummaryEvery: number
     /** 思考(reasoning)モードを有効にするか(対応モデルのみ) */
     thinkingEnabled: boolean
     /** 本のチャットのシステムプロンプト(差し替え可能) */
@@ -55,12 +41,7 @@ export interface AppSettings {
   }
 }
 
-/** ページ解析の既定システムプロンプト(設定の「既定に戻す」と一致させる)。 */
-export const DEFAULT_SYSTEM_PROMPT =
-  'あなたは漫画の内容を客観的に説明するアシスタントです。' +
-  '推測は控えめにし、画像に実際に見えたものを日本語で簡潔に記述してください。'
-
-/** 本のチャットの既定システムプロンプト(backend analysis._CHAT_SYSTEM と一致させること)。 */
+/** 本のチャットの既定システムプロンプト(backend chat._CHAT_SYSTEM と一致させること)。 */
 export const DEFAULT_CHAT_SYSTEM_PROMPT =
   'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
   '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
@@ -87,16 +68,9 @@ const DEFAULTS: AppSettings = {
   llm: {
     baseUrl: 'http://127.0.0.1:8080/v1',
     model: 'local',
-    samplePages: 10,
     serverPath: '',
     modelsDir: '',
     ctxSize: 4096,
-    systemPromptEnabled: false,
-    systemPrompt: DEFAULT_SYSTEM_PROMPT,
-    usePageContext: false,
-    pageContextCount: 2,
-    useStorySummary: false,
-    storySummaryEvery: 5,
     thinkingEnabled: false,
     chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
     chatDynamicSuggestions: true
@@ -133,7 +107,12 @@ export function getSettings(): AppSettings {
   if (existsSync(file)) {
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf-8')) as Partial<AppSettings>
-      const llm = { ...DEFAULTS.llm, ...(parsed.llm ?? {}) }
+      // 今は使っていない項目(漫画向けの解析の設定など)は読み込み時に落とす(次の保存で消える)。
+      const saved = (parsed.llm ?? {}) as Record<string, unknown>
+      const llm = { ...DEFAULTS.llm }
+      for (const key of Object.keys(DEFAULTS.llm) as (keyof AppSettings['llm'])[]) {
+        if (key in saved) (llm as Record<string, unknown>)[key] = saved[key]
+      }
       // 手を加えていない旧既定(漫画向け)のままなら、本向けの既定に置き換える。
       if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
         llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT

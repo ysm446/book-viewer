@@ -21,7 +21,7 @@ def scan_root(req: ScanRequest) -> dict:
 
 @router.get("/works")
 def list_works(root: str) -> dict:
-    """ルートに登録済みの作品一覧を返す(既読位置付き)。"""
+    """ルートに登録済みの本の一覧を返す(既読位置付き)。"""
     r = get_root(root)
     with connect(r) as conn:
         rows = conn.execute(

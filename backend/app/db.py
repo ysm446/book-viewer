@@ -54,15 +54,6 @@ CREATE TABLE IF NOT EXISTS work_tags (
     PRIMARY KEY (work_id, tag_id)
 );
 
-CREATE TABLE IF NOT EXISTS analysis (
-    work_id     TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
-    summary     TEXT,
-    story_state TEXT,   -- 物語の走行状態(JSON): {synopsis, characters[], threads[], tags[]}
-    status      TEXT NOT NULL DEFAULT 'none',
-    model       TEXT,
-    created_at  TEXT
-);
-
 -- 本文検索の索引(本文を数百字ずつに分けたまとまりと、その埋め込みベクトル)
 CREATE TABLE IF NOT EXISTS chunks (
     work_id   TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
@@ -81,16 +72,6 @@ CREATE TABLE IF NOT EXISTS chunk_index (
     updated_at  TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS page_analysis (
-    work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
-    page         INTEGER NOT NULL,
-    description  TEXT,
-    text         TEXT,
-    model        TEXT,
-    context_mode TEXT,   -- キャプション生成時の文脈: story_state / prev_k / none
-    created_at   TEXT NOT NULL,
-    PRIMARY KEY (work_id, page)
-);
 """
 
 
@@ -109,12 +90,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE works ADD COLUMN writing_mode TEXT NOT NULL DEFAULT 'horizontal'"
         )
-    acols = {row["name"] for row in conn.execute("PRAGMA table_info(analysis)").fetchall()}
-    if acols and "story_state" not in acols:
-        conn.execute("ALTER TABLE analysis ADD COLUMN story_state TEXT")
-    pcols = {row["name"] for row in conn.execute("PRAGMA table_info(page_analysis)").fetchall()}
-    if pcols and "context_mode" not in pcols:
-        conn.execute("ALTER TABLE page_analysis ADD COLUMN context_mode TEXT")
 
 
 def _init_search(conn: sqlite3.Connection) -> None:

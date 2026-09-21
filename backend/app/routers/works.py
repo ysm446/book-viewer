@@ -27,7 +27,7 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
     """書名を変更する。
 
     本フォルダ方式なら book.json の書名を変え、フォルダ名も追従させる。
-    それ以前の作品はアーカイブのファイル名を変更する(拡張子・フォルダは維持)。
+    それ以前の本はアーカイブのファイル名を変更する(拡張子・フォルダは維持)。
     """
     name = body.name.strip()
     if not name:
@@ -47,7 +47,7 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
             conn.execute(
                 "UPDATE works SET rel_path = ?, title = ? WHERE id = ?", (rel, name, work_id)
             )
-            search.update_index(conn, work_id)
+            search.update_index(conn, r, work_id)
             conn.commit()
         return {"ok": True, "title": name, "rel_path": rel}
 
@@ -66,7 +66,7 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
         conn.execute(
             "UPDATE works SET rel_path = ?, title = ? WHERE id = ?", (rel, name, work_id)
         )
-        search.update_index(conn, work_id)
+        search.update_index(conn, r, work_id)
         conn.commit()
     return {"ok": True, "title": name, "rel_path": rel}
 
@@ -81,7 +81,7 @@ def delete_work(work_id: str, root: str) -> dict:
     with connect(r) as conn:
         row = conn.execute("SELECT rel_path FROM works WHERE id = ?", (work_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="作品が見つかりません")
+        raise HTTPException(status_code=404, detail="本が見つかりません")
     path = library.book_dir_for(r, row["rel_path"]) or r / row["rel_path"]
     if path.exists():
         try:
@@ -109,7 +109,7 @@ def get_work(work_id: str, root: str) -> dict:
     with connect(r) as conn:
         row = conn.execute("SELECT * FROM works WHERE id = ?", (work_id,)).fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         state = conn.execute(
             "SELECT last_page, completed, updated_at FROM reading_state WHERE work_id = ?",
             (work_id,),
@@ -139,7 +139,7 @@ def update_reading_state(work_id: str, root: str, body: ReadingStateUpdate) -> d
     r = get_root(root)
     with connect(r) as conn:
         if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         conn.execute(
             """
             INSERT INTO reading_state (work_id, last_page, completed, updated_at)
@@ -164,13 +164,13 @@ class DirectionUpdate(BaseModel):
 
 @router.put("/{work_id}/direction")
 def update_direction(work_id: str, root: str, body: DirectionUpdate) -> dict:
-    """作品ごとの読み進め方向の上書きを保存する。"""
+    """本ごとの読み進め方向の上書きを保存する。"""
     if body.direction not in ("default", "rtl", "ltr"):
         raise HTTPException(status_code=400, detail="direction は default / rtl / ltr のいずれか")
     r = get_root(root)
     with connect(r) as conn:
         if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         conn.execute(
             "UPDATE works SET page_direction = ? WHERE id = ?", (body.direction, work_id)
         )
@@ -191,7 +191,7 @@ def update_writing_mode(work_id: str, root: str, body: WritingModeUpdate) -> dic
     with connect(r) as conn:
         row = conn.execute("SELECT rel_path FROM works WHERE id = ?", (work_id,)).fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         book_dir = library.book_dir_for(r, row["rel_path"])
         if book_dir is not None:
             book = library.read_book(book_dir)
@@ -211,13 +211,13 @@ class SpreadOffsetUpdate(BaseModel):
 
 @router.put("/{work_id}/spread-offset")
 def update_spread_offset(work_id: str, root: str, body: SpreadOffsetUpdate) -> dict:
-    """作品ごとの見開きペア境界ずらしを保存する。"""
+    """本ごとの見開きペア境界ずらしを保存する。"""
     if body.offset not in ("default", "0", "1"):
         raise HTTPException(status_code=400, detail="offset は default / 0 / 1 のいずれか")
     r = get_root(root)
     with connect(r) as conn:
         if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         conn.execute(
             "UPDATE works SET spread_offset = ? WHERE id = ?", (body.offset, work_id)
         )
@@ -231,14 +231,14 @@ class TagAdd(BaseModel):
 
 @router.post("/{work_id}/tags")
 def add_tag(work_id: str, root: str, body: TagAdd) -> dict:
-    """作品にタグを付ける(タグが無ければ作成)。"""
+    """本にタグを付ける(タグが無ければ作成)。"""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="タグ名が空です")
     r = get_root(root)
     with connect(r) as conn:
         if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
         tag_id = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()["id"]
         conn.execute(
@@ -251,7 +251,7 @@ def add_tag(work_id: str, root: str, body: TagAdd) -> dict:
 
 @router.delete("/{work_id}/tags")
 def remove_tag(work_id: str, root: str, name: str) -> dict:
-    """作品からタグを外す(タグ自体は残す)。"""
+    """本からタグを外す(タグ自体は残す)。"""
     r = get_root(root)
     with connect(r) as conn:
         conn.execute(
@@ -284,7 +284,7 @@ def add_bookmark(work_id: str, root: str, body: BookmarkCreate) -> dict:
     r = get_root(root)
     with connect(r) as conn:
         if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="作品が見つかりません")
+            raise HTTPException(status_code=404, detail="本が見つかりません")
         cur = conn.execute(
             "INSERT INTO bookmarks (work_id, page, note, created_at) VALUES (?, ?, ?, ?)",
             (work_id, body.page, body.note, _now()),

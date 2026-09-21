@@ -149,6 +149,20 @@ def chat_stream(
                 yield {"type": "content", "text": c}
 
 
+def parse_json(text: str) -> dict:
+    """モデル出力から最初の JSON オブジェクトを取り出す(コードフェンス許容)。"""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```[a-zA-Z]*", "", cleaned).strip()
+    cleaned = cleaned.rstrip("`").strip()
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
 def ping(base_url: str, timeout: float = 5.0) -> bool:
     """/models を叩いて到達性を確認する。"""
     url = base_url.rstrip("/") + "/models"

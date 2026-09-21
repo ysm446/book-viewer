@@ -71,6 +71,8 @@ function api(path: string): string {
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // 起動直後、接続先が決まる前の呼び出し(定期取得など)は送らない(file:// へ飛んでしまう)。
+  if (!baseUrl) throw new Error('バックエンドに接続していません')
   const res = await fetch(api(path), {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
@@ -141,7 +143,7 @@ export async function renameWork(
   })
 }
 
-/** 作品を削除する(本フォルダはごみ箱へ移動)。 */
+/** 本を削除する(本フォルダはごみ箱へ移動)。 */
 export async function deleteWork(root: string, workId: string): Promise<void> {
   await jsonFetch(`/works/${workId}?root=${encodeURIComponent(root)}`, { method: 'DELETE' })
 }
@@ -169,7 +171,7 @@ export async function saveReadingState(
 export type Direction = 'default' | 'rtl' | 'ltr'
 export type SpreadOffset = 'default' | '0' | '1'
 
-/** 作品ごとの読み進め方向の上書きを保存する。 */
+/** 本ごとの読み進め方向の上書きを保存する。 */
 export async function setWorkDirection(
   root: string,
   workId: string,
@@ -193,7 +195,7 @@ export async function setWorkWritingMode(
   })
 }
 
-/** 作品ごとの見開きペア境界ずらしを保存する。 */
+/** 本ごとの見開きペア境界ずらしを保存する。 */
 export async function setWorkSpreadOffset(
   root: string,
   workId: string,
@@ -248,7 +250,7 @@ export function pageUrl(root: string, workId: string, index: number): string {
   return api(`/works/${workId}/pages/${index}?root=${encodeURIComponent(root)}`)
 }
 
-/** 作品にタグを付ける(無ければ作成)。 */
+/** 本にタグを付ける(無ければ作成)。 */
 export async function addWorkTag(root: string, workId: string, name: string): Promise<void> {
   await jsonFetch(`/works/${workId}/tags?root=${encodeURIComponent(root)}`, {
     method: 'POST',
@@ -256,7 +258,7 @@ export async function addWorkTag(root: string, workId: string, name: string): Pr
   })
 }
 
-/** 作品からタグを外す。 */
+/** 本からタグを外す。 */
 export async function removeWorkTag(root: string, workId: string, name: string): Promise<void> {
   await jsonFetch(
     `/works/${workId}/tags?root=${encodeURIComponent(root)}&name=${encodeURIComponent(name)}`,
@@ -264,52 +266,8 @@ export async function removeWorkTag(root: string, workId: string, name: string):
   )
 }
 
-export interface AnalysisResult {
-  summary: string
-  status: string
-  model: string | null
-  created_at: string | null
-}
-
-export interface PageAnalysis {
-  page: number
-  description: string | null
-  text: string | null
-  model: string | null
-  created_at: string
-}
-
-/** 作品の全体解析(あらすじ)と、解析済みページ番号一覧を取得する。 */
-export async function getAnalysis(
-  root: string,
-  workId: string
-): Promise<{ analysis: AnalysisResult | null; analyzedPages: number[] }> {
-  const data = await jsonFetch<{ analysis: AnalysisResult | null; analyzed_pages: number[] }>(
-    `/works/${workId}/analysis?root=${encodeURIComponent(root)}`
-  )
-  return { analysis: data.analysis, analyzedPages: data.analyzed_pages ?? [] }
-}
-
-/** 指定ページの解析結果(無ければ null)。 */
-export async function getPageAnalysis(
-  root: string,
-  workId: string,
-  page: number
-): Promise<PageAnalysis | null> {
-  const data = await jsonFetch<{ analysis: PageAnalysis | null }>(
-    `/works/${workId}/page-analysis?root=${encodeURIComponent(root)}&page=${page}`
-  )
-  return data.analysis
-}
-
-export interface AnalysisProgress {
-  phase: string
-  current: number
-  total: number
-}
-
-/** キューのジョブ種別(解析 / 文字起こし)。 */
-export type JobKind = 'analyze' | 'transcribe' | 'structure' | 'index'
+/** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引)。 */
+export type JobKind = 'transcribe' | 'structure' | 'index'
 
 export interface QueueCurrent {
   work_id: string
@@ -332,47 +290,15 @@ export interface QueueRecent {
   status: string
   error: string | null
 }
-export interface AnalysisQueue {
+export interface JobQueue {
   current: QueueCurrent | null
   pending: QueueItem[]
   recent: QueueRecent[]
 }
 
-export async function enqueueAnalysis(
-  root: string,
-  workIds: string[],
-  samplePages: number,
-  opts?: {
-    focusPage?: number
-    pages?: number[]
-    systemPrompt?: string | null
-    allPages?: boolean
-    contextCount?: number
-    summaryOnly?: boolean
-    useStorySummary?: boolean
-    storyEvery?: number
-  }
-): Promise<AnalysisQueue> {
-  return jsonFetch(`/analysis/enqueue`, {
-    method: 'POST',
-    body: JSON.stringify({
-      root,
-      work_ids: workIds,
-      sample_pages: samplePages,
-      focus_page: opts?.focusPage ?? null,
-      pages: opts?.pages ?? null,
-      system_prompt: opts?.systemPrompt ?? null,
-      all_pages: opts?.allPages ?? false,
-      context_count: opts?.contextCount ?? 0,
-      summary_only: opts?.summaryOnly ?? false,
-      use_story_summary: opts?.useStorySummary ?? false,
-      story_every: opts?.storyEvery ?? 5
-    })
-  })
-}
-
-export async function getAnalysisQueue(): Promise<AnalysisQueue> {
-  return jsonFetch(`/analysis/queue`)
+/** ジョブキューの状態(実行中・待機中・最近終わったもの)。 */
+export async function getQueue(): Promise<JobQueue> {
+  return jsonFetch(`/queue`)
 }
 
 /** 文字起こし済みのページ番号(0 始まり)。 */
@@ -431,7 +357,7 @@ export async function enqueueTranscribe(
   root: string,
   workId: string,
   opts?: { pages?: number[]; force?: boolean; engine?: TranscribeEngine }
-): Promise<AnalysisQueue> {
+): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/transcribe`, {
     method: 'POST',
     body: JSON.stringify({
@@ -502,7 +428,7 @@ export async function enqueueIndex(
   workId: string,
   serverPath: string,
   modelsDir: string
-): Promise<AnalysisQueue> {
+): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/index`, {
     method: 'POST',
     body: JSON.stringify({ root, server_path: serverPath, models_dir: modelsDir })
@@ -526,7 +452,7 @@ export async function enqueueStructure(
   root: string,
   workId: string,
   redo = false
-): Promise<AnalysisQueue> {
+): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/structure`, {
     method: 'POST',
     body: JSON.stringify({ root, redo })
@@ -574,7 +500,7 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
   })
 }
 
-/** 作品について会話する(非ストリーム)。 */
+/** 本について会話する(非ストリーム)。 */
 export async function chatAboutWork(
   root: string,
   workId: string,
@@ -584,7 +510,7 @@ export async function chatAboutWork(
   return jsonFetch(`/works/${workId}/chat`, { method: 'POST', body: chatBody(root, messages, opts) })
 }
 
-/** 作品チャットのストリーム版。SSE を読み、reasoning / content の差分をコールバックする。 */
+/** 本チャットのストリーム版。SSE を読み、reasoning / content の差分をコールバックする。 */
 export async function chatAboutWorkStream(
   root: string,
   workId: string,
@@ -650,25 +576,14 @@ export async function suggestChatQuestions(
   return data.questions ?? []
 }
 
-export async function cancelAnalysis(workId: string): Promise<AnalysisQueue> {
-  return jsonFetch(`/analysis/cancel`, { method: 'POST', body: JSON.stringify({ work_id: workId }) })
+/** その本のジョブを止める(待機中は取り消し、実行中は次の区切りで中断)。 */
+export async function cancelJob(workId: string): Promise<JobQueue> {
+  return jsonFetch(`/queue/cancel`, { method: 'POST', body: JSON.stringify({ work_id: workId }) })
 }
 
-export async function clearAnalysisQueue(): Promise<AnalysisQueue> {
-  return jsonFetch(`/analysis/clear`, { method: 'POST' })
-}
-
-/** 作品の最新タグを取得する(解析後の反映用)。 */
-export async function getWorkTags(root: string, workId: string): Promise<string[]> {
-  const data = await jsonFetch<{ tags: string[] }>(
-    `/works/${workId}?root=${encodeURIComponent(root)}`
-  )
-  return data.tags ?? []
-}
-
-/** 解析中の進捗を取得する。 */
-export async function getAnalysisProgress(workId: string): Promise<AnalysisProgress> {
-  return jsonFetch(`/works/${workId}/analysis/progress`)
+/** 待機中のジョブをすべて取り消す(実行中のものも中断する)。 */
+export async function clearQueue(): Promise<JobQueue> {
+  return jsonFetch(`/queue/clear`, { method: 'POST' })
 }
 
 /** LLM サーバへの到達性を確認する。 */
@@ -770,7 +685,7 @@ export async function downloadLlamaBuild(
   })
 }
 
-/** 作品サムネイルの URL。<img src> に直接渡す。 */
+/** 本サムネイルの URL。<img src> に直接渡す。 */
 export function thumbnailUrl(root: string, workId: string): string {
   return api(`/works/${workId}/thumbnail?root=${encodeURIComponent(root)}`)
 }

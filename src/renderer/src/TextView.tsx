@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  cancelAnalysis,
+  cancelJob,
   enqueueTranscribe,
   figureUrl,
-  getAnalysisQueue,
+  getQueue,
   getPageText,
   getTextPages,
   pageUrl,
@@ -40,7 +40,7 @@ interface Editing {
 
 /**
  * リーダーのテキスト表示。本フォルダの pages/*.md を Markdown として描画し、
- * 未処理のページは文字起こしを解析キューへ積める。縦書きの本は縦書きで組む。
+ * 未処理のページは文字起こしをジョブキューへ積める。縦書きの本は縦書きで組む。
  */
 export function TextView({ root, work, pages, vertical, engine }: Props): JSX.Element {
   const [texts, setTexts] = useState<Record<number, PageText | null>>({})
@@ -102,7 +102,7 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
         return
       }
       try {
-        const q = await getAnalysisQueue()
+        const q = await getQueue()
         const cur = q.current?.work_id === work.id && q.current.kind === 'transcribe' ? q.current : null
         const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'transcribe')
         if (cur) setJob({ state: 'running', current: cur.current, total: cur.total })
@@ -135,7 +135,7 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
 
   // 開いた時点で既に文字起こし中なら進み具合を追う。
   useEffect(() => {
-    getAnalysisQueue()
+    getQueue()
       .then((q) => {
         const active =
           (q.current?.work_id === work.id && q.current.kind === 'transcribe') ||
@@ -213,7 +213,7 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
             <span className="text-toolbar-note">
               {job.state === 'queued' ? '順番待ち…' : `文字起こし中 ${job.current}/${job.total}`}
             </span>
-            <button className="btn" onClick={() => void cancelAnalysis(work.id)}>
+            <button className="btn" onClick={() => void cancelJob(work.id)}>
               中止
             </button>
           </>

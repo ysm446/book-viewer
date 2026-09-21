@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  cancelAnalysis,
-  clearAnalysisQueue,
+  cancelJob,
+  clearQueue,
   enqueueStructure,
   enqueueTranscribe,
-  getAnalysisQueue,
+  getQueue,
   getLlmStatus,
   health,
   initApi,
@@ -20,7 +20,7 @@ import {
   searchWorks,
   thumbnailUrl,
   unloadLlmModel,
-  type AnalysisQueue,
+  type JobQueue,
   type Direction,
   type ImportCandidate,
   type ImportResult,
@@ -110,7 +110,7 @@ export function App(): JSX.Element {
   // ファイル名変更ダイアログ(Electron では window.prompt が使えないため自前で持つ)。
   const [renameTarget, setRenameTarget] = useState<Work | null>(null)
   const [renameValue, setRenameValue] = useState('')
-  const [queue, setQueue] = useState<AnalysisQueue | null>(null)
+  const [queue, setQueue] = useState<JobQueue | null>(null)
   const [currentElapsed, setCurrentElapsed] = useState(0)
   // 目次パネルの開閉は本をまたいで保持する。
   const [readerShowInfo, setReaderShowInfo] = useState(false)
@@ -163,12 +163,12 @@ export function App(): JSX.Element {
   }, [root, current, notify])
 
   // main が横取りした F9 / F12 の通知。F9(ページ画像の保存)は Reader 側で処理するため、
-  // ここでは作品が開かれていないときの案内だけ出す。
+  // ここでは本が開かれていないときの案内だけ出す。
   useEffect(() => {
     return window.api.onShortcut((name) => {
       if (name === 'capture-window') void captureWindow()
       else if (name === 'save-pages' && !current) {
-        notify('作品を開いてから F9 を押してください', null, true)
+        notify('本を開いてから F9 を押してください', null, true)
       }
     })
   }, [captureWindow, current, notify])
@@ -190,7 +190,7 @@ export function App(): JSX.Element {
         if (last) {
           setRoot(last)
           const list = await rescan(last)
-          // 最後に読んでいた作品を自動で開く(ページ位置は work.last_page から復元される)。
+          // 最後に読んでいた本を自動で開く(ページ位置は work.last_page から復元される)。
           if (loaded.lastWorkId && list) {
             const w = list.find((x) => x.id === loaded.lastWorkId)
             if (w) setCurrent(w)
@@ -207,12 +207,12 @@ export function App(): JSX.Element {
     })()
   }, [])
 
-  // 解析キューを定期取得し、ジョブ完了時は一覧(タグ等)を更新する。
+  // ジョブキューを定期取得し、ジョブ完了時は一覧(タグ等)を更新する。
   useEffect(() => {
     let lastCurrent: string | null = null
     const tick = async (): Promise<void> => {
       try {
-        const q = await getAnalysisQueue()
+        const q = await getQueue()
         setQueue(q)
         const cur = q.current?.work_id ?? null
         if (cur !== lastCurrent) {
@@ -340,15 +340,15 @@ export function App(): JSX.Element {
 
   async function cancelQueueItem(id: string): Promise<void> {
     try {
-      setQueue(await cancelAnalysis(id))
+      setQueue(await cancelJob(id))
     } catch {
       // 無視
     }
   }
 
-  async function clearQueue(): Promise<void> {
+  async function clearAllJobs(): Promise<void> {
     try {
-      setQueue(await clearAnalysisQueue())
+      setQueue(await clearQueue())
     } catch {
       // 無視
     }
@@ -430,7 +430,7 @@ export function App(): JSX.Element {
     void window.api.setSettings(patch)
   }
 
-  // 作品を開き、次回起動時に復元できるよう最後に開いた作品として記録する。
+  // 本を開き、次回起動時に復元できるよう最後に開いた本として記録する。
   function openWork(w: Work): void {
     setCurrent(w)
     changeSettings({ lastWorkId: w.id })
@@ -442,7 +442,7 @@ export function App(): JSX.Element {
   }
 
   function handleProgress(workId: string, page: number, completed: boolean): void {
-    // 一覧の既読位置を更新(セッション中に同じ作品を開き直しても復元できるように)。
+    // 一覧の既読位置を更新(セッション中に同じ本を開き直しても復元できるように)。
     setWorks((ws) =>
       ws.map((w) =>
         w.id === workId ? { ...w, last_page: page, completed: completed ? 1 : 0 } : w
@@ -594,7 +594,7 @@ export function App(): JSX.Element {
     window.addEventListener('mouseup', onUp)
   }, [])
 
-  // 全タグ(候補・絞り込み用)を作品一覧から導出する。
+  // 全タグ(候補・絞り込み用)を本一覧から導出する。
   const allTags = useMemo(() => {
     const set = new Set<string>()
     works.forEach((w) => w.tags.forEach((t) => set.add(t)))
@@ -957,7 +957,7 @@ export function App(): JSX.Element {
               <input
                 className="search-input"
                 type="search"
-                placeholder="タイトル・あらすじ・ページ内容で検索…"
+                placeholder="書名・著者・要約・本文で検索…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -1042,7 +1042,7 @@ export function App(): JSX.Element {
               </div>
             )}
             {root && works.length > 0 && visibleWorks.length === 0 && (
-              <div className="explorer-empty">該当する作品がありません。</div>
+              <div className="explorer-empty">該当する本がありません。</div>
             )}
             {visibleWorks.map((w) => (
               <div
@@ -1186,7 +1186,7 @@ export function App(): JSX.Element {
             />
           ) : (
             <div className="viewer-empty">
-              {root ? '左の一覧から作品を選択してください。' : 'まず管理ルートを選択してください。'}
+              {root ? '左の一覧から本を選択してください。' : 'まず管理ルートを選択してください。'}
             </div>
           )}
         </main>
@@ -1237,7 +1237,7 @@ export function App(): JSX.Element {
             {queue.pending.length > 0 && (
               <>
                 <span className="sbq-pending">待機 {queue.pending.length} 件</span>
-                <button className="queue-clear" onClick={clearQueue} title="待機中をすべて取消">
+                <button className="queue-clear" onClick={clearAllJobs} title="待機中をすべて取消">
                   取消
                 </button>
               </>

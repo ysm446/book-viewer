@@ -21,7 +21,7 @@ def resolve_archive(root: Path, work_id: str) -> Path:
     with connect(root) as conn:
         row = conn.execute("SELECT rel_path FROM works WHERE id = ?", (work_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="作品が見つかりません")
+        raise HTTPException(status_code=404, detail="本が見つかりません")
     path = root / row["rel_path"]
     if not path.is_file():
         raise HTTPException(status_code=410, detail="アーカイブファイルが存在しません")

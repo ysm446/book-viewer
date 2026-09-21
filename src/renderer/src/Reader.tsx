@@ -40,7 +40,7 @@ interface ReaderProps {
   root: string
   work: Work
   settings: AppSettings
-  /** 作品ごとの方向上書きが変わったとき、一覧側へ反映する。 */
+  /** 本ごとの方向上書きが変わったとき、一覧側へ反映する。 */
   onDirectionChange?: (workId: string, direction: Direction) => void
   /** 既読位置が変わったとき、一覧側へ反映する。 */
   onProgress?: (workId: string, page: number, completed: boolean) => void
@@ -60,7 +60,7 @@ interface ReaderProps {
   /** しおり一覧の開閉(同上。既定は常時表示)。 */
   showBookmarks: boolean
   onShowBookmarksChange: (v: boolean) => void
-  /** 作品チャットの開閉(同上)。 */
+  /** 本チャットの開閉(同上)。 */
   showChat: boolean
   onShowChatChange: (v: boolean) => void
   /** 指定時のみ「一覧へ」ボタンと Escape での復帰を有効にする。 */
@@ -245,7 +245,7 @@ export function Reader({
     return () => clearTimeout(t)
   }, [page])
 
-  // リーダーを離れる(アンマウント/作品切替)直前に、最新ページを確実に保存する。
+  // リーダーを離れる(アンマウント/本切替)直前に、最新ページを確実に保存する。
   useEffect(() => {
     return () => persist.current(pageRef.current)
   }, [])
@@ -270,7 +270,7 @@ export function Reader({
     })
   }, [root, work.id, page, currentSpread, count, ratios])
 
-  // 見開きのペア境界を 1 ページずらす(作品ごとに保存)。
+  // 見開きのペア境界を 1 ページずらす(本ごとに保存)。
   const toggleOffset = useCallback(() => {
     const nextOffset: SpreadOffset = effectiveOffset === 1 ? '0' : '1'
     setOffsetOverride(nextOffset)
@@ -468,7 +468,7 @@ export function Reader({
         <button
           className={`btn ${showChat ? 'btn-active' : ''}`}
           onClick={() => onShowChatChange(!showChat)}
-          title="この作品について質問する"
+          title="この本について質問する"
         >
           チャット
         </button>
@@ -491,7 +491,7 @@ export function Reader({
               className="reader-dir"
               value={dirOverride}
               onChange={(e) => changeDirection(e.target.value as Direction)}
-              title="この作品の読み進め方向"
+              title="この本の読み進め方向"
             >
               <option value="default">
                 既定（{settings.defaultDirection === 'rtl' ? '右→左' : '左→右'}）

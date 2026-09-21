@@ -8,7 +8,7 @@ router = APIRouter(prefix="/works")
 
 @router.get("/{work_id}/thumbnail")
 def get_thumbnail(work_id: str, root: str) -> Response:
-    """作品サムネイル(先頭ページの縮小・キャッシュ)を返す。"""
+    """本のサムネイル(先頭ページの縮小・キャッシュ)を返す。"""
     r = get_root(root)
     path = resolve_archive(r, work_id)
     try:

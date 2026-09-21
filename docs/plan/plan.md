@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-09-22 01:30
+更新日時: 2026-09-22 02:30
 
 目的と完成形は [goals.md](goals.md)、現在の進捗は [progress.md](progress.md)。
 
@@ -11,7 +11,8 @@
 - バックエンド: Python(FastAPI / uvicorn)。zip 読み出し・画像処理・OCR・LLM 呼び出しを担う。
 - ローカル LLM: llama.cpp の `llama-server` を起動して OpenAI 互換 API で呼ぶ。
   Vision モデルは `--mmproj` 付きで起動する(既存の `llm_server.py` / `llm.py`)。
-- 重い処理(OCR・要約・埋め込み)は解析キュー(`analysis_queue.py`)で直列に実行する。
+- 重い処理(文字起こし・章立てと要約・本文検索の索引)はジョブキュー(`jobs.py`)で直列に実行する。
+  API は `/api/queue`(状態)・`/api/queue/cancel`・`/api/queue/clear`。
 
 ## ライブラリの構成
 
@@ -82,7 +83,7 @@
 ### 文字起こし
 
 - 1 枚のスクリーンショット(= アーカイブの 1 ページ)ごとに Markdown にする
-  (`backend/app/transcribe.py`)。解析キューのジョブ種別 `transcribe` として直列に処理する。
+  (`backend/app/transcribe.py`)。ジョブ種別 `transcribe` として直列に処理する。
 - サンプルのスクリーンショットは Kindle の画面そのもので、1 枚に見開き 2 ページ(または 1 ページ)と、
   上部の書名バー・下部の「ページ○/○」が入っている。
 - **既定のエンジンは YomiToku**(`backend/app/layout_ocr.py`)。M1 の比較
@@ -131,7 +132,7 @@ OCR / レイアウト検出のモデルは入れ替わりが早いので、特�
 
 ### 章立てと要約(M4 の最初の版)
 
-- `backend/app/structure.py`。解析キューのジョブ種別 `structure`(LLM が必要)。
+- `backend/app/structure.py`。ジョブ種別 `structure`(LLM が必要)。
 - 章立て: 目次ページ(前のほうで「目次」を含むページとその後 4 ページ)、各ページの見出し(`## `)、
   本文の少ないページの図の文字(章の扉)をページ番号付きで LLM に渡し、章(level 1)と節(level 2)の
   開始ページを JSON(json_schema)で返させる。範囲外・重複を除き、最初の章の前は「前付け」で補う。
@@ -148,12 +149,11 @@ OCR / レイアウト検出のモデルは入れ替わりが早いので、特�
   使わない(保存時に消す)。範囲が同じなら名前を変えても要約は残る。
 - API: `GET /api/works/{id}/structure`、`POST /api/works/{id}/structure`(`redo`)、
   `PUT /api/works/{id}/structure/chapters`。
-- 画面: リーダーの「目次」パネル(`TocPanel.tsx`)。漫画向けの「解析」パネル・ページ解析の
-  オーバーレイ・タグ自動生成・解析の設定は画面から外した(backend の解析 API は残っている)。
+- 画面: リーダーの「目次」パネル(`TocPanel.tsx`)。
 
 ### 本のチャット(最初の版)
 
-- `analysis._build_chat_messages`: system に「本の情報」(書名・著者・ページ数・今のページ)と、
+- `chat._build_chat_messages`(`backend/app/chat.py`): system に「本の情報」(書名・著者・ページ数・今のページ)と、
   文字起こし済みの本文のうち今のページまでを、近いページから `context_chars` 文字まで入れる。
   先のページは入れない。本文が無ければ、その旨を読者に伝えるよう指示する。
 - `context_chars` はフロントがコンテキスト長の半分(2,000〜60,000 字)を渡す。
@@ -168,9 +168,16 @@ OCR / レイアウト検出のモデルは入れ替わりが早いので、特�
   チャットでは予算の 1/4 までを「質問に関係しそうな本文」に使い、今のページ付近として渡すページは除く。
   「三つの石」(340 まとまり)で索引 17.5 秒、検索 0.05 秒前後。今のページから遠い内容
   (p.101 で p.35 の蛇紋岩の利用)を根拠のページ付きで答えられるようになった。
-- 解析キューのジョブ種別 `index`。API: `GET|POST /api/works/{id}/index`。本文を直したり文字起こしを
+- ジョブ種別 `index`。API: `GET|POST /api/works/{id}/index`。本文を直したり文字起こしを
   進めたりすると `stale` になり、チャット欄で作り直しを促す。
 
-土台から引き継いだ漫画向けの解析(ページ説明・あらすじ・タグ)は画面から外した。backend の
-`analysis.py` の解析部分・`/analysis/enqueue` と DB の `analysis` / `page_analysis` は残っているので、
-不要になったら整理する(全文検索の索引が解析のあらすじを使っている)。
+### 全文検索
+
+一覧の検索は `search.py`(FTS5 trigram)。書名・著者・本全体と章の要約・文字起こしした本文を 1 行に
+まとめて索引にする。スキャン時と、文字起こし・章立てと要約のジョブが終わったときに作り直す。
+
+### 漫画向けの解析(削除済み)
+
+土台から引き継いだ漫画向けの解析(ページ説明・物語のまとめ・あらすじとタグの生成、`analysis.py`)は
+2026-09-22 に削除した。新しい library.db には `analysis` / `page_analysis` を作らない。既存の DB に
+残っているデータには触れない(古い漫画用の管理ルートのため)。

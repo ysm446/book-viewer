@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import analysis_queue, transcribe
+from .. import jobs, transcribe
 from ..resolve import get_root
 
 router = APIRouter(prefix="/works")
@@ -53,18 +53,12 @@ class TranscribeRequest(BaseModel):
 
 @router.post("/{work_id}/transcribe")
 def enqueue_transcribe(work_id: str, body: TranscribeRequest) -> dict:
-    """文字起こしを解析キューに積む。"""
+    """文字起こしをジョブキューに積む。"""
     get_root(body.root)
     if body.engine not in transcribe.ENGINES:
         raise HTTPException(status_code=400, detail="engine は yomitoku / vlm のいずれか")
-    return analysis_queue.enqueue(
-        body.root,
-        [work_id],
-        0,
-        pages=body.pages,
-        kind="transcribe",
-        force=body.force,
-        engine=body.engine,
+    return jobs.enqueue(
+        body.root, work_id, "transcribe", pages=body.pages, force=body.force, engine=body.engine
     )
 
 

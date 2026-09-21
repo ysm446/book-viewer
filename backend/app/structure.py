@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import library, llm, transcribe
-from .analysis import Cancelled, _parse_json, _plain_for_llm, clear_progress, set_progress
+from .progress import Cancelled, clear_progress, set_progress
 
 SUMMARIES_DIRNAME = "summaries"
 BOOK_SUMMARY = "book.md"
@@ -186,7 +186,7 @@ def detect_chapters(root: Path, work_id: str, base_url: str) -> list[dict]:
         think=False,
         json_schema=_CHAPTERS_SCHEMA,
     )
-    chapters = _normalize_chapters(_parse_json(out).get("chapters") or [], page_count)
+    chapters = _normalize_chapters(llm.parse_json(out).get("chapters") or [], page_count)
     book["chapters"] = chapters
     book["chapters_updated_at"] = _now()
     library.write_book(book_dir, book)
@@ -373,9 +373,9 @@ def run(
             set_progress(work_id, n, total, "summary")
             path = _summary_path(book_dir, ch["start"])
             pages = [
-                (p, _plain_for_llm(texts[p]))
+                (p, transcribe.plain_for_llm(texts[p]))
                 for p in range(ch["start"], ch["end"] + 1)
-                if p in texts and _plain_for_llm(texts[p])
+                if p in texts and transcribe.plain_for_llm(texts[p])
             ]
             if not pages:
                 continue

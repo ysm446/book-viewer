@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import analysis_queue, embedding, structure, transcribe
+from .. import embedding, jobs, structure, transcribe
 from ..resolve import get_root
 
 router = APIRouter(prefix="/works")
@@ -24,9 +24,9 @@ class StructureRequest(BaseModel):
 
 @router.post("/{work_id}/structure")
 def enqueue_structure(work_id: str, body: StructureRequest) -> dict:
-    """章立てと要約の作成を解析キューに積む(LLM の読み込みが必要)。"""
+    """章立てと要約の作成をジョブキューに積む(LLM の読み込みが必要)。"""
     get_root(body.root)
-    return analysis_queue.enqueue(body.root, [work_id], 0, kind="structure", force=body.redo)
+    return jobs.enqueue(body.root, work_id, "structure", force=body.redo)
 
 
 class ChapterEntry(BaseModel):
@@ -66,12 +66,11 @@ class IndexRequest(BaseModel):
 
 @router.post("/{work_id}/index")
 def enqueue_index(work_id: str, body: IndexRequest) -> dict:
-    """本文検索の索引づくりを解析キューに積む(埋め込み用の llama-server を別に起動する)。"""
+    """本文検索の索引づくりをジョブキューに積む(埋め込み用の llama-server を別に起動する)。"""
     get_root(body.root)
-    return analysis_queue.enqueue(
+    return jobs.enqueue(
         body.root,
-        [work_id],
-        0,
-        kind="index",
+        work_id,
+        "index",
         extra={"server_path": body.server_path, "models_dir": body.models_dir},
     )

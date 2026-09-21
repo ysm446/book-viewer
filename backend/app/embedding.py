@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import llm, llm_server, transcribe
-from .analysis import Cancelled, _plain_for_llm, clear_progress, set_progress
+from .progress import Cancelled, clear_progress, set_progress
 from .db import connect
 
 EMBED_URL = "http://127.0.0.1:8091/v1"
@@ -197,7 +197,7 @@ def chunk_pages(pages: dict[int, str]) -> list[tuple[int, str]]:
     chunks: list[tuple[int, str]] = []
     for page in sorted(pages):
         buf = ""
-        for para in _paragraphs(_plain_for_llm(pages[page])):
+        for para in _paragraphs(transcribe.plain_for_llm(pages[page])):
             if buf and len(buf) + len(para) > _CHUNK_CHARS:
                 chunks.append((page, buf))
                 buf = ""

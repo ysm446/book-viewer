@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  cancelAnalysis,
+  cancelJob,
   enqueueStructure,
-  getAnalysisQueue,
+  getQueue,
   getStructure,
   saveChapters,
   type BookStructure,
@@ -78,7 +78,7 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
         return
       }
       try {
-        const q = await getAnalysisQueue()
+        const q = await getQueue()
         const cur = q.current?.work_id === work.id && q.current.kind === 'structure' ? q.current : null
         const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'structure')
         if (cur) {
@@ -109,7 +109,7 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
 
   // 開いた時点で作成中なら進み具合を追う。
   useEffect(() => {
-    getAnalysisQueue()
+    getQueue()
       .then((q) => {
         const active =
           (q.current?.work_id === work.id && q.current.kind === 'structure') ||
@@ -210,7 +210,7 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
                 ? '順番待ち…'
                 : `${PHASE_LABEL[job.phase] ?? '作成中'} ${job.current}/${job.total}`}
             </span>
-            <button className="btn" onClick={() => void cancelAnalysis(work.id)}>
+            <button className="btn" onClick={() => void cancelJob(work.id)}>
               中止
             </button>
           </>

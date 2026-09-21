@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   chatAboutWorkStream,
   enqueueIndex,
-  getAnalysisQueue,
+  getQueue,
   getIndexStatus,
   suggestChatQuestions,
   type ChatTurn,
@@ -79,7 +79,7 @@ export function ReaderChat({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   // ストリーミング中の fetch を中断するためのコントローラ。
   const abortRef = useRef<AbortController | null>(null)
-  // 候補生成の中断用。作品を切り替えたら古い応答は捨てる。
+  // 候補生成の中断用。本を切り替えたら古い応答は捨てる。
   const suggestAbortRef = useRef<AbortController | null>(null)
   // ログが末尾付近にあるときだけ自動スクロールする(過去ログ閲覧中は引き戻さない)。
   const stickToBottomRef = useRef(true)
@@ -124,7 +124,7 @@ export function ReaderChat({
     }
   }
 
-  // パネルを閉じる・作品を切り替える(アンマウント)時は生成を打ち切る。
+  // パネルを閉じる・本を切り替える(アンマウント)時は生成を打ち切る。
   // 放置するとバックエンドの LLM スロットを塞ぎ続ける。
   useEffect(
     () => () => {
@@ -134,7 +134,7 @@ export function ReaderChat({
     []
   )
 
-  // 作品が変わったら会話をリセットし(履歴はセッションのみ)、候補を取り直す。
+  // 本が変わったら会話をリセットし(履歴はセッションのみ)、候補を取り直す。
   useEffect(() => {
     setMessages([])
     setError(null)
@@ -162,7 +162,7 @@ export function ReaderChat({
       try {
         const [st, q] = await Promise.all([
           getIndexStatus(root, work.id, modelsDir),
-          getAnalysisQueue()
+          getQueue()
         ])
         if (!alive) return
         setIndex(st)

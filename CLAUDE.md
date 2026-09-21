@@ -52,7 +52,7 @@ manga-viewer を土台に作り替え中。
 src/main/        Electron メインプロセス（ウィンドウ、Python 起動・死活監視）
 src/preload/     contextBridge による IPC 公開
 src/renderer/    React UI（一覧 / リーダー）
-backend/app/     FastAPI（scanner / archive / db / routers）
+backend/app/     FastAPI（library / transcribe / structure / embedding / chat / jobs / routers など）
 models/          GGUF モデル（git 管理外）
 vendor/          llama.cpp 等の外部バイナリ（git 管理外）
 data/            実行時生成物（git 管理外）

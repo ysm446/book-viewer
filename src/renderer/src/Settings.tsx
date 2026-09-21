@@ -238,7 +238,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
               <div className="settings-label">
                 最初のページ（表紙）を単独表示
                 <span className="settings-desc">
-                  見開きのペアを1つずらす既定値。作品ごとに「ずらす」で上書きできます
+                  見開きのペアを1つずらす既定値。本ごとに「ずらす」で上書きできます
                 </span>
               </div>
               <label className="switch">
@@ -287,7 +287,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
               <div className="settings-label">
                 既定の方向
                 <span className="settings-desc">
-                  作品ごとに上書きできます（作品を開いたときのバーから変更）
+                  本ごとに上書きできます（本を開いたときのバーから変更）
                 </span>
               </div>
               <div className="seg">
@@ -295,7 +295,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                   className={`seg-btn ${settings.defaultDirection === 'rtl' ? 'seg-active' : ''}`}
                   onClick={() => onChange({ defaultDirection: 'rtl' })}
                 >
-                  右 → 左（漫画）
+                  右 → 左（縦書きの本・漫画）
                 </button>
                 <button
                   className={`seg-btn ${settings.defaultDirection === 'ltr' ? 'seg-active' : ''}`}
@@ -553,7 +553,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                 </button>
               </div>
               <span className="settings-desc">
-                チャットの基本人格。作品情報（あらすじ・登場人物・伏線）はこの後に自動で添えられます
+                チャットの基本人格。本の情報・読み終えた章の要約・本文はこの後に自動で添えられます
               </span>
               <textarea
                 className="system-prompt"
@@ -569,7 +569,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
               <div className="settings-label">
                 内容から質問候補を作る
                 <span className="settings-desc">
-                  会話の下に並ぶ候補に、いまの作品・ページ・直近の会話に合った質問を混ぜる。
+                  会話の下に並ぶ候補に、いまの本・ページ・直近の会話に合った質問を混ぜる。
                   モデル未起動・生成失敗のときは定番の候補だけになります
                 </span>
               </div>

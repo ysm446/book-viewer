@@ -21,16 +21,9 @@ export interface AppSettings {
   llm: {
     baseUrl: string
     model: string
-    samplePages: number
     serverPath: string
     modelsDir: string
     ctxSize: number
-    systemPromptEnabled: boolean
-    systemPrompt: string
-    usePageContext: boolean
-    pageContextCount: number
-    useStorySummary: boolean
-    storySummaryEvery: number
     thinkingEnabled: boolean
     chatSystemPrompt: string
     chatDynamicSuggestions: boolean
