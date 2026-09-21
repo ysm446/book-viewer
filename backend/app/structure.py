@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,8 @@ from .analysis import Cancelled, _parse_json, _plain_for_llm, clear_progress, se
 
 SUMMARIES_DIRNAME = "summaries"
 BOOK_SUMMARY = "book.md"
+# 章の要約を作ったときの章の範囲。範囲が変わった(章立てを直した)章の要約は使わない。
+SUMMARY_INDEX = "index.json"
 
 # 章の要約で一度に渡す本文の既定の上限(文字数)。コンテキスト長が分かればそこから決める。
 _DEFAULT_CHUNK_CHARS = 12000
@@ -135,8 +138,11 @@ def _chapter_prompt(title: str, page_count: int, toc: str, outline: list[str]) -
     )
 
 
-def _normalize_chapters(raw: list, page_count: int) -> list[dict]:
-    """LLM の章立てを整える(範囲外・重複を除き、ページ順に並べ、先頭に前付けを補う)。"""
+def _normalize_chapters(raw: list, page_count: int, fill_front: bool = True) -> list[dict]:
+    """章立てを整える(範囲外・重複を除き、ページ順に並べる)。page は 1 始まりで受け取る。
+
+    fill_front=True なら、最初の章より前のページを「前付け」の章で補う(LLM の章立て用)。
+    """
     out: list[dict] = []
     seen = set()
     for c in raw:
@@ -160,7 +166,7 @@ def _normalize_chapters(raw: list, page_count: int) -> list[dict]:
     first = next((c["page"] for c in out if c["level"] == 1), None)
     if first is None:
         return [{"title": "本文", "page": 0, "level": 1}]
-    if first > 0:
+    if first > 0 and fill_front:
         out.insert(0, {"title": "前付け(表紙・目次など)", "page": 0, "level": 1})
     return out
 
@@ -208,6 +214,33 @@ def chapter_ranges(chapters: list[dict], page_count: int) -> list[dict]:
 
 def _summary_path(book_dir: Path, start: int) -> Path:
     return book_dir / SUMMARIES_DIRNAME / f"ch-p{start + 1:04d}.md"
+
+
+def _load_index(book_dir: Path) -> dict:
+    try:
+        data = json.loads((book_dir / SUMMARIES_DIRNAME / SUMMARY_INDEX).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_index(book_dir: Path, index: dict) -> None:
+    path = book_dir / SUMMARIES_DIRNAME / SUMMARY_INDEX
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _valid_summary(book_dir: Path, index: dict, ch: dict) -> str | None:
+    """章の要約。作ったときと章の範囲が違えば(章立てを直した)None。"""
+    path = _summary_path(book_dir, ch["start"])
+    if not path.is_file():
+        return None
+    made = index.get(path.name)
+    if made and (made.get("start"), made.get("end")) != (ch["start"], ch["end"]):
+        return None
+    return path.read_text(encoding="utf-8").strip()
 
 
 def _write(path: Path, text: str) -> None:
@@ -326,11 +359,12 @@ def run(
         if redo or not chapters:
             if redo:
                 # 章の区切りが変わると古い要約は合わなくなるので消す。
-                for f in (book_dir / SUMMARIES_DIRNAME).glob("*.md"):
+                for f in (book_dir / SUMMARIES_DIRNAME).glob("*"):
                     f.unlink(missing_ok=True)
             chapters = detect_chapters(root, work_id, base_url)
         ranges = chapter_ranges(chapters, page_count)
         texts = _page_texts(root, work_id)
+        index = _load_index(book_dir)
         total = len(ranges) + 1
         done: list[tuple[dict, str]] = []
         for n, ch in enumerate(ranges):
@@ -345,11 +379,14 @@ def run(
             ]
             if not pages:
                 continue
-            if path.is_file() and not redo:
-                done.append((ch, path.read_text(encoding="utf-8")))
+            existing = None if redo else _valid_summary(book_dir, index, ch)
+            if existing:
+                done.append((ch, existing))
                 continue
             summary = _summarize_chapter(base_url, title, ch, pages, limit)
             _write(path, summary)
+            index[path.name] = {"start": ch["start"], "end": ch["end"]}
+            _save_index(book_dir, index)
             done.append((ch, summary))
         if cancel_check and cancel_check():
             raise Cancelled()
@@ -364,15 +401,49 @@ def get_structure(root: Path, work_id: str) -> dict:
     """画面・チャット用の章立てと要約。章立てが無ければ chapters は空。"""
     book_dir, book = _book_dir(root, work_id)
     page_count = int(book.get("page_count") or 0)
+    index = _load_index(book_dir)
     chapters = []
     for ch in chapter_ranges(book.get("chapters") or [], page_count):
-        path = _summary_path(book_dir, ch["start"])
-        ch["summary"] = path.read_text(encoding="utf-8").strip() if path.is_file() else None
+        ch["summary"] = _valid_summary(book_dir, index, ch)
         chapters.append(ch)
     book_path = book_dir / SUMMARIES_DIRNAME / BOOK_SUMMARY
     return {
         "chapters": chapters,
+        # 編集用の章立て(章と節をページ順に。page は 0 始まり)
+        "entries": book.get("chapters") or [],
         "book_summary": book_path.read_text(encoding="utf-8").strip() if book_path.is_file() else None,
         "transcribed": len(transcribe.done_pages(root, work_id)),
         "page_count": page_count,
     }
+
+
+def save_chapters(root: Path, work_id: str, entries: list[dict]) -> dict:
+    """手で直した章立てを保存する(entries の page は 0 始まり)。
+
+    範囲が変わった章の要約と、本全体の要約は古くなるので消す(「要約を更新」で作り直せる)。
+    """
+    book_dir, book = _book_dir(root, work_id)
+    page_count = int(book.get("page_count") or 0)
+    raw = []
+    for e in entries:
+        try:
+            raw.append({**e, "page": int(e.get("page")) + 1})
+        except (TypeError, ValueError):
+            continue
+    chapters = _normalize_chapters(raw, page_count, fill_front=False)
+    old = {(c["start"], c["end"]) for c in chapter_ranges(book.get("chapters") or [], page_count)}
+    new = chapter_ranges(chapters, page_count)
+    book["chapters"] = chapters
+    book["chapters_updated_at"] = _now()
+    library.write_book(book_dir, book)
+
+    if {(c["start"], c["end"]) for c in new} != old:
+        index = _load_index(book_dir)
+        keep = {_summary_path(book_dir, c["start"]).name for c in new if _valid_summary(book_dir, index, c)}
+        for f in (book_dir / SUMMARIES_DIRNAME).glob("ch-p*.md"):
+            if f.name not in keep:
+                f.unlink(missing_ok=True)
+                index.pop(f.name, None)
+        _save_index(book_dir, index)
+        (book_dir / SUMMARIES_DIRNAME / BOOK_SUMMARY).unlink(missing_ok=True)
+    return get_structure(root, work_id)

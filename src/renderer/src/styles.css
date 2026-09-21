@@ -1600,6 +1600,57 @@ input[type='checkbox']:focus-visible {
   font-size: 12px;
   color: var(--text-sub);
 }
+/* 章立ての編集 */
+.toc-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.toc-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.toc-edit-row.is-section {
+  padding-left: 24px;
+}
+.toc-edit-level {
+  flex: 0 0 56px;
+}
+.toc-edit-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.toc-edit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.toc-edit-page {
+  flex: 0 0 72px;
+  font-variant-numeric: tabular-nums;
+}
+.toc-edit-p {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.toc-edit-del {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+.toc-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
 
 /* 設定: ビルド管理 */
 .settings-row-col {

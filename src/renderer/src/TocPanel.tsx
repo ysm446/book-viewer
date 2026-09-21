@@ -4,7 +4,9 @@ import {
   enqueueStructure,
   getAnalysisQueue,
   getStructure,
+  saveChapters,
   type BookStructure,
+  type ChapterEntry,
   type Work
 } from './api'
 import { Markdown } from './Markdown'
@@ -21,6 +23,14 @@ interface Props {
 
 type Job = { state: 'queued' | 'running'; current: number; total: number; phase: string } | null
 
+/** 編集中の 1 行。page は画面に出す 1 始まりの番号(入力途中の空欄も許す)。 */
+interface EditRow {
+  key: number
+  title: string
+  page: string
+  level: 1 | 2
+}
+
 const PHASE_LABEL: Record<string, string> = {
   chapters: '章立てを作成中',
   summary: '章の要約を作成中',
@@ -33,6 +43,10 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
   const [job, setJob] = useState<Job>(null)
   const [error, setError] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<number | null>(null)
+  // 章立ての編集(null なら表示モード)
+  const [editRows, setEditRows] = useState<EditRow[] | null>(null)
+  const [saving, setSaving] = useState(false)
+  const nextKey = useRef(0)
   const alive = useRef(true)
   const polling = useRef(false)
   const currentRef = useRef<HTMLLIElement | null>(null)
@@ -122,6 +136,50 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
     }
   }
 
+  function startEdit(): void {
+    setError(null)
+    setEditRows(
+      (data?.entries ?? []).map((e) => ({
+        key: nextKey.current++,
+        title: e.title,
+        page: String(e.page + 1),
+        level: e.level
+      }))
+    )
+  }
+
+  function updateRow(key: number, patch: Partial<EditRow>): void {
+    setEditRows((rows) => rows && rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  }
+
+  // いま開いているページに、新しい章を足す(ページ順の位置に入れる)。
+  function addRow(): void {
+    const page = currentPage + 1
+    setEditRows((rows) => {
+      if (!rows) return rows
+      const row: EditRow = { key: nextKey.current++, title: '', page: String(page), level: 1 }
+      const at = rows.findIndex((r) => Number(r.page) > page)
+      return at < 0 ? [...rows, row] : [...rows.slice(0, at), row, ...rows.slice(at)]
+    })
+  }
+
+  async function saveEdit(): Promise<void> {
+    if (!editRows) return
+    const entries: ChapterEntry[] = editRows
+      .filter((r) => r.title.trim() && Number(r.page) >= 1)
+      .map((r) => ({ title: r.title.trim(), page: Number(r.page) - 1, level: r.level }))
+    setSaving(true)
+    setError(null)
+    try {
+      setData(await saveChapters(root, work.id, entries))
+      setEditRows(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const chapters = data?.chapters ?? []
   const hasChapters = chapters.length > 0
   const currentIndex = chapters.findIndex((c) => c.start <= currentPage && currentPage <= c.end)
@@ -138,7 +196,11 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
     <div className="reader-info toc-panel">
       <div className="reader-info-head">
         <span className="reader-info-title">目次と要約</span>
-        {job ? (
+        {editRows ? (
+          <span className="reader-info-note">
+            章立てを編集中。範囲が変わった章の要約は、保存すると消えます（「要約を更新」で作り直せます）
+          </span>
+        ) : job ? (
           <>
             <span className="analyze-bar toc-bar">
               <span className="analyze-bar-fill" style={{ width: `${pct}%` }} />
@@ -168,6 +230,11 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
               {hasChapters ? '要約を更新' : '章立てと要約を作る'}
             </button>
             {hasChapters && (
+              <button className="btn" onClick={startEdit} title="章・節の名前や開始ページを直す">
+                編集
+              </button>
+            )}
+            {hasChapters && (
               <button
                 className="btn"
                 onClick={() => void start(true)}
@@ -194,7 +261,62 @@ export function TocPanel({ root, work, currentPage, llmReady, onJump }: Props): 
       {data && data.transcribed > 0 && !hasChapters && !job && (
         <div className="reader-info-empty">まだ章立てがありません。</div>
       )}
-      {hasChapters && (
+      {editRows && (
+        <div className="toc-edit">
+          {editRows.map((r) => (
+            <div key={r.key} className={`toc-edit-row ${r.level === 2 ? 'is-section' : ''}`}>
+              <select
+                className="filter-select toc-edit-level"
+                value={r.level}
+                onChange={(e) => updateRow(r.key, { level: Number(e.target.value) === 2 ? 2 : 1 })}
+                aria-label="種類"
+              >
+                <option value={1}>章</option>
+                <option value={2}>節</option>
+              </select>
+              <input
+                className="toc-edit-input"
+                value={r.title}
+                placeholder="名前"
+                spellCheck={false}
+                onChange={(e) => updateRow(r.key, { title: e.target.value })}
+                aria-label="名前"
+              />
+              <span className="toc-edit-p">p.</span>
+              <input
+                className="toc-edit-input toc-edit-page"
+                type="number"
+                min={1}
+                max={data?.page_count}
+                value={r.page}
+                onChange={(e) => updateRow(r.key, { page: e.target.value })}
+                aria-label="開始ページ"
+              />
+              <button
+                className="icon-btn toc-edit-del"
+                onClick={() => setEditRows((rows) => rows && rows.filter((x) => x.key !== r.key))}
+                aria-label="この行を削除"
+                title="この行を削除"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="toc-edit-actions">
+            <button className="btn" onClick={addRow} title="いま開いているページから始まる章を足します">
+              ＋ p.{currentPage + 1} に追加
+            </button>
+            <span className="text-toolbar-spacer" />
+            <button className="btn" onClick={() => setEditRows(null)} disabled={saving}>
+              キャンセル
+            </button>
+            <button className="btn btn-primary" onClick={() => void saveEdit()} disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </div>
+        </div>
+      )}
+      {hasChapters && !editRows && (
         <div className="toc-body">
           {data?.book_summary && (
             <details className="toc-book">

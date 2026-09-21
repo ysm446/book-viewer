@@ -27,3 +27,24 @@ def enqueue_structure(work_id: str, body: StructureRequest) -> dict:
     """章立てと要約の作成を解析キューに積む(LLM の読み込みが必要)。"""
     get_root(body.root)
     return analysis_queue.enqueue(body.root, [work_id], 0, kind="structure", force=body.redo)
+
+
+class ChapterEntry(BaseModel):
+    title: str
+    page: int  # 0 始まり
+    level: int = 1  # 1 = 章 / 2 = 節
+
+
+class ChaptersUpdate(BaseModel):
+    root: str
+    chapters: list[ChapterEntry]
+
+
+@router.put("/{work_id}/structure/chapters")
+def save_chapters(work_id: str, body: ChaptersUpdate) -> dict:
+    """手で直した章立てを保存する。範囲が変わった章の要約は消える。"""
+    r = get_root(body.root)
+    try:
+        return structure.save_chapters(r, work_id, [c.model_dump() for c in body.chapters])
+    except (transcribe.TranscribeError, structure.StructureError) as e:
+        raise HTTPException(status_code=400, detail=str(e))

@@ -421,8 +421,17 @@ export interface Chapter {
   summary: string | null
 }
 
+/** 章立ての 1 項目(編集用)。page は 0 始まり、level 1 = 章 / 2 = 節。 */
+export interface ChapterEntry {
+  title: string
+  page: number
+  level: 1 | 2
+}
+
 export interface BookStructure {
   chapters: Chapter[]
+  /** 編集用の章立て(章と節をページ順に) */
+  entries: ChapterEntry[]
   /** 本全体の要約(先の内容を含む)。まだ無ければ null */
   book_summary: string | null
   /** 文字起こし済みのページ数 */
@@ -433,6 +442,18 @@ export interface BookStructure {
 /** 章立てと要約を取得する。 */
 export async function getStructure(root: string, workId: string): Promise<BookStructure> {
   return jsonFetch(`/works/${workId}/structure?root=${encodeURIComponent(root)}`)
+}
+
+/** 手で直した章立てを保存する。範囲が変わった章の要約は消える。 */
+export async function saveChapters(
+  root: string,
+  workId: string,
+  chapters: ChapterEntry[]
+): Promise<BookStructure> {
+  return jsonFetch(`/works/${workId}/structure/chapters`, {
+    method: 'PUT',
+    body: JSON.stringify({ root, chapters })
+  })
 }
 
 /** 章立てと要約の作成をキューに積む(redo で章立てから作り直す)。 */
