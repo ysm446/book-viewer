@@ -1,6 +1,7 @@
 /** バックエンド (FastAPI) への薄い HTTP クライアント。 */
 
 let baseUrl = ''
+let token = ''
 
 export interface Work {
   id: string
@@ -63,11 +64,14 @@ export interface ImportResult {
 export async function initApi(): Promise<{ baseUrl: string; port: number }> {
   const info = await window.api.getBackendInfo()
   baseUrl = info.baseUrl
+  token = info.token
   return info
 }
 
+/** API の合言葉付きの URL。<img src> でも使えるよう、すべての URL にクエリで付ける。 */
 function api(path: string): string {
-  return `${baseUrl}/api${path}`
+  const sep = path.includes('?') ? '&' : '?'
+  return `${baseUrl}/api${path}${sep}token=${encodeURIComponent(token)}`
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -148,7 +152,7 @@ export async function deleteWork(root: string, workId: string): Promise<void> {
   await jsonFetch(`/works/${workId}?root=${encodeURIComponent(root)}`, { method: 'DELETE' })
 }
 
-/** タイトル・あらすじ・ページ説明を横断検索し、該当 work_id を返す。 */
+/** 書名・著者・要約・本文を横断検索し、該当 work_id を返す。 */
 export async function searchWorks(root: string, q: string): Promise<string[]> {
   const data = await jsonFetch<{ work_ids: string[] }>(
     `/roots/search?root=${encodeURIComponent(root)}&q=${encodeURIComponent(q)}`
@@ -164,7 +168,9 @@ export async function saveReadingState(
 ): Promise<void> {
   await jsonFetch(`/works/${workId}/reading-state?root=${encodeURIComponent(root)}`, {
     method: 'PUT',
-    body: JSON.stringify({ last_page: lastPage, completed })
+    body: JSON.stringify({ last_page: lastPage, completed }),
+    // ウィンドウを閉じる直前の保存も届くようにする。
+    keepalive: true
   })
 }
 
@@ -500,16 +506,6 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
   })
 }
 
-/** 本について会話する(非ストリーム)。 */
-export async function chatAboutWork(
-  root: string,
-  workId: string,
-  messages: ChatTurn[],
-  opts?: ChatOpts
-): Promise<{ reply: string }> {
-  return jsonFetch(`/works/${workId}/chat`, { method: 'POST', body: chatBody(root, messages, opts) })
-}
-
 /** 本チャットのストリーム版。SSE を読み、reasoning / content の差分をコールバックする。 */
 export async function chatAboutWorkStream(
   root: string,
@@ -586,15 +582,6 @@ export async function clearQueue(): Promise<JobQueue> {
   return jsonFetch(`/queue/clear`, { method: 'POST' })
 }
 
-/** LLM サーバへの到達性を確認する。 */
-export async function pingLlm(baseUrl: string): Promise<boolean> {
-  const data = await jsonFetch<{ ok: boolean }>(`/llm/ping`, {
-    method: 'POST',
-    body: JSON.stringify({ base_url: baseUrl })
-  })
-  return data.ok
-}
-
 export interface LlmModel {
   name: string
   path: string
@@ -606,6 +593,8 @@ export interface LlmModel {
 
 export interface LlmStatus {
   running: boolean
+  /** 読み込み中(起動確認の待ち)。 */
+  loading?: boolean
   model: string | null
   base_url: string | null
 }

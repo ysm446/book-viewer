@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import library, search, thumbnails
+from .. import jobs, library, search, thumbnails
 from ..db import connect
 from ..resolve import get_root, resolve_archive
 
@@ -32,6 +32,9 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="名前が空です")
+    if jobs.is_busy(work_id):
+        # 文字起こし中にフォルダを動かすと、旧名のフォルダへ書き戻して孤児が残る。
+        raise HTTPException(status_code=409, detail="この本の処理が進行中です。終わってから名前を変えてください")
     r = get_root(root)
     old_path = resolve_archive(r, work_id)
     book_dir = library.book_dir_for(r, old_path.relative_to(r).as_posix())
@@ -47,7 +50,9 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
             conn.execute(
                 "UPDATE works SET rel_path = ?, title = ? WHERE id = ?", (rel, name, work_id)
             )
-            search.update_index(conn, r, work_id)
+            # 索引づくりは別接続で works を読むので、先に確定させる。
+            conn.commit()
+            search.update_index(conn, r, work_id, book_dir=new_dir)
             conn.commit()
         return {"ok": True, "title": name, "rel_path": rel}
 
@@ -66,6 +71,7 @@ def rename_work(work_id: str, root: str, body: FilenameUpdate) -> dict:
         conn.execute(
             "UPDATE works SET rel_path = ?, title = ? WHERE id = ?", (rel, name, work_id)
         )
+        conn.commit()
         search.update_index(conn, r, work_id)
         conn.commit()
     return {"ok": True, "title": name, "rel_path": rel}
@@ -77,6 +83,8 @@ def delete_work(work_id: str, root: str) -> dict:
 
     タグ・しおり等は CASCADE で消える。
     """
+    if jobs.is_busy(work_id):
+        raise HTTPException(status_code=409, detail="この本の処理が進行中です。止めてから削除してください")
     r = get_root(root)
     with connect(r) as conn:
         row = conn.execute("SELECT rel_path FROM works WHERE id = ?", (work_id,)).fetchone()

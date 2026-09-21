@@ -7,6 +7,7 @@ llama-server を `--mmproj` 付きで起動すると、/v1/chat/completions に
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -15,6 +16,26 @@ import urllib.request
 
 class LlmError(RuntimeError):
     pass
+
+
+class LlmHttpError(LlmError):
+    """LLM サーバが HTTP エラーを返した(status を持つ)。"""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+# urlopen は接続時の失敗を URLError に包むが、読み出し中の切断・タイムアウトは素の例外で出る。
+_NETWORK_ERRORS = (urllib.error.URLError, OSError, http.client.HTTPException)
+
+
+def _iter_lines(resp):
+    """ストリーム応答を行ごとに返す。途中でサーバが落ちたら LlmError にする。"""
+    try:
+        yield from resp
+    except _NETWORK_ERRORS as e:
+        raise LlmError(f"LLM サーバとの通信が途中で切れました: {e}") from e
 
 
 _THINK_RE = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
@@ -39,7 +60,11 @@ def _post(url: str, payload: dict, timeout: float) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
             return json.loads(res.read().decode("utf-8"))
-    except urllib.error.URLError as e:
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:500]
+        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}") from e
+    except _NETWORK_ERRORS as e:
+        # 接続失敗だけでなく、読み出し中のタイムアウト・切断(サーバが落ちた等)も同じ扱いにする。
         raise LlmError(f"LLM サーバへ接続できません: {e}") from e
 
 
@@ -95,10 +120,11 @@ def chat(
         res = _post(
             url, _payload(model, messages, temperature, False, think, json_mode, json_schema), timeout
         )
-    except LlmError:
-        if json_schema is None:
-            raise
+    except LlmHttpError as e:
         # 古い llama-server 等が response_format(json_schema) を拒否した場合の後方互換。
+        # 接続失敗やタイムアウトで同じ呼び出しを繰り返さないよう、400 のときだけ落とす。
+        if json_schema is None or e.status != 400:
+            raise
         res = _post(url, _payload(model, messages, temperature, False, think, True), timeout)
     try:
         content = res["choices"][0]["message"]["content"]
@@ -127,10 +153,10 @@ def chat_stream(
     )
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.URLError as e:
+    except _NETWORK_ERRORS as e:
         raise LlmError(f"LLM サーバへ接続できません: {e}") from e
     with resp:
-        for raw in resp:
+        for raw in _iter_lines(resp):
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
                 continue
@@ -170,7 +196,7 @@ def ping(base_url: str, timeout: float = 5.0) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
             return res.status == 200
-    except urllib.error.URLError:
+    except _NETWORK_ERRORS:
         return False
 
 

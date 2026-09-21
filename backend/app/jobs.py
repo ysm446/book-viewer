@@ -24,12 +24,24 @@ _cancel_ids: set[str] = set()
 _worker_started = False
 
 
+class NotFound(LookupError):
+    """積もうとした本が索引に無い。"""
+
+
 def _title(root: Path, work_id: str) -> str:
     with connect(root) as conn:
         row = conn.execute("SELECT title FROM works WHERE id = ?", (work_id,)).fetchone()
     if row is None:
-        raise RuntimeError("本が見つかりません")
+        raise NotFound("本が見つかりません")
     return row["title"]
+
+
+def is_busy(work_id: str) -> bool:
+    """その本のジョブが待機中か実行中か(本フォルダを動かす操作の前に確かめる)。"""
+    with _lock:
+        if _current is not None and _current["work_id"] == work_id:
+            return True
+        return any(j["work_id"] == work_id for j in _pending)
 
 
 def _ensure_worker() -> None:
@@ -59,29 +71,26 @@ def enqueue(
     """
     if kind not in KINDS:
         raise ValueError(f"未対応のジョブです: {kind}")
+    # DB の読み込みはロックの外で(DB が混んでいるときに snapshot() まで待たせない)。
+    title = _title(Path(root), work_id)
     with _cond:
         busy = {(j["work_id"], j["kind"]) for j in _pending}
         if _current:
             busy.add((_current["work_id"], _current["kind"]))
         if (work_id, kind) not in busy:
-            try:
-                title = _title(Path(root), work_id)
-            except RuntimeError:
-                title = None
-            if title is not None:
-                _pending.append(
-                    {
-                        "work_id": work_id,
-                        "root": root,
-                        "title": title,
-                        "kind": kind,
-                        "pages": pages,
-                        "force": force,
-                        "engine": engine,
-                        "extra": extra or {},
-                    }
-                )
-                _cond.notify()
+            _pending.append(
+                {
+                    "work_id": work_id,
+                    "root": root,
+                    "title": title,
+                    "kind": kind,
+                    "pages": pages,
+                    "force": force,
+                    "engine": engine,
+                    "extra": extra or {},
+                }
+            )
+            _cond.notify()
     _ensure_worker()
     return snapshot()
 

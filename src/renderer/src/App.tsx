@@ -207,6 +207,35 @@ export function App(): JSX.Element {
     })()
   }, [])
 
+  // バックエンドが落ちたら知らせ、再起動できるようにする(YomiToku の OOM などで uvicorn ごと落ちることがある)。
+  const [restarting, setRestarting] = useState(false)
+  useEffect(
+    () =>
+      window.api.onBackendExited(() => {
+        setStatus('error')
+        setLlmStatus({ running: false, model: null, base_url: null })
+        notify('バックエンドが停止しました。上部の「再起動」で起動し直せます', null, true)
+      }),
+    [notify]
+  )
+  async function restartBackend(): Promise<void> {
+    if (restarting) return
+    setRestarting(true)
+    setStatus('connecting')
+    try {
+      await window.api.restartBackend()
+      await initApi()
+      await health()
+      setStatus('ready')
+      if (root) await rescan(root)
+    } catch (e) {
+      setStatus('error')
+      notify(`バックエンドを起動できませんでした: ${(e as Error).message}`, null, true)
+    } finally {
+      setRestarting(false)
+    }
+  }
+
   // ジョブキューを定期取得し、ジョブ完了時は一覧(タグ等)を更新する。
   useEffect(() => {
     let lastCurrent: string | null = null
@@ -482,21 +511,26 @@ export function App(): JSX.Element {
     if (picked) await openRoot(picked)
   }
 
+  // 管理ルートを素早く切り替えたとき、遅れて返った前のルートの結果で一覧を上書きしないための世代番号。
+  const scanGen = useRef(0)
   async function rescan(target: string): Promise<Work[] | null> {
+    const gen = ++scanGen.current
     setBusy(true)
     setMessage('スキャン中…')
     try {
       const result = await scanRoot(target)
       const list = await listWorks(target)
+      if (gen !== scanGen.current) return null
       setWorks(list)
       setLooseCount(result.loose)
       setMessage(`本 ${result.total} 冊`)
       return list
     } catch (e) {
+      if (gen !== scanGen.current) return null
       setMessage(`エラー: ${(e as Error).message}`)
       return null
     } finally {
-      setBusy(false)
+      if (gen === scanGen.current) setBusy(false)
     }
   }
 
@@ -694,6 +728,11 @@ export function App(): JSX.Element {
           <span className={`status status-${status}`}>
             {status === 'connecting' ? 'バックエンド接続中…' : 'バックエンド未接続'}
           </span>
+        )}
+        {status === 'error' && (
+          <button className="btn" onClick={() => void restartBackend()} disabled={restarting}>
+            再起動
+          </button>
         )}
         <span className="topbar-spacer" />
         {loadingModel ? (

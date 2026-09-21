@@ -30,6 +30,13 @@ export interface AppSettings {
   }
 }
 
+/** バックエンドの接続先と API の合言葉。 */
+export interface BackendInfo {
+  baseUrl: string
+  port: number
+  token: string
+}
+
 /** F9 で保存する 1 枚ぶんの入力(バイト列はレンダラが backend から取得したもの)。 */
 export interface SavePageInput {
   /** 0 始まりのページ番号。 */
@@ -49,8 +56,16 @@ export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm'>> & {
 /** レンダラへ公開する安全な API。 */
 const api = {
   /** バックエンド(FastAPI)の接続先を取得する。 */
-  getBackendInfo: (): Promise<{ baseUrl: string; port: number }> =>
-    ipcRenderer.invoke('backend:info'),
+  getBackendInfo: (): Promise<BackendInfo> => ipcRenderer.invoke('backend:info'),
+  /** 落ちたバックエンドを起動し直し、新しい接続先を返す。 */
+  restartBackend: (): Promise<BackendInfo> =>
+    ipcRenderer.invoke('backend:restart'),
+  /** バックエンドが予期せず終了したときの通知を購読する。戻り値で解除。 */
+  onBackendExited: (callback: (code: number | null) => void): (() => void) => {
+    const listener = (_e: unknown, code: number | null): void => callback(code)
+    ipcRenderer.on('backend:exited', listener)
+    return () => ipcRenderer.off('backend:exited', listener)
+  },
   /** 管理ルート用フォルダ選択ダイアログを開く。キャンセル時は null。 */
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectFolder'),
   /** ファイル選択ダイアログを開く。キャンセル時は null。 */
@@ -68,7 +83,11 @@ const api = {
   onSystemResources: (callback: (payload: SystemResources) => void): (() => void) => {
     const listener = (_e: unknown, payload: SystemResources): void => callback(payload)
     ipcRenderer.on('system:resources', listener)
-    return () => ipcRenderer.off('system:resources', listener)
+    ipcRenderer.send('system:subscribe')
+    return () => {
+      ipcRenderer.off('system:resources', listener)
+      ipcRenderer.send('system:unsubscribe')
+    }
   },
   /** ウィンドウのコンテンツ領域を PNG で保存し、保存先パスを返す(F12)。 */
   captureWindow: (root: string, title: string): Promise<string> =>

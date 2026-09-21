@@ -59,9 +59,16 @@ CREATE TABLE IF NOT EXISTS chunks (
     work_id   TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
     seq       INTEGER NOT NULL,
     page      INTEGER NOT NULL,   -- まとまりのページ(0 始まり)
+    page_end  INTEGER,            -- まとまりが次のページの続きを含むときはそのページ(ネタバレ防止の判定用)
     text      TEXT NOT NULL,
     embedding BLOB,               -- float32 の並び(正規化済み)
     PRIMARY KEY (work_id, seq)
+);
+
+-- 全文検索の索引を作ったときの指紋(スキャン時に変わった本だけ作り直す)
+CREATE TABLE IF NOT EXISTS search_meta (
+    work_id   TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+    signature TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS chunk_index (
@@ -90,6 +97,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE works ADD COLUMN writing_mode TEXT NOT NULL DEFAULT 'horizontal'"
         )
+    chunk_cols = {row["name"] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    if chunk_cols and "page_end" not in chunk_cols:
+        conn.execute("ALTER TABLE chunks ADD COLUMN page_end INTEGER")
 
 
 def _init_search(conn: sqlite3.Connection) -> None:

@@ -198,6 +198,10 @@ npm run build       # ビルド
 cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 8771
 ```
 
+アプリから起動したバックエンドは、起動ごとの合言葉(環境変数 `BOOK_VIEWER_TOKEN`)を
+`X-Book-Viewer-Token` ヘッダかクエリ `token` で要求する(`/api/health` を除く)。
+単体起動で環境変数を付けなければ検査しない。
+
 ```
 src/main/        Electron メインプロセス(ウィンドウ、Python 起動・死活監視)
 src/preload/     contextBridge による IPC 公開

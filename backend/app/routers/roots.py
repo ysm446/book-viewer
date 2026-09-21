@@ -68,6 +68,6 @@ def set_works_order(req: OrderRequest) -> dict:
 
 @router.get("/search")
 def search_works(root: str, q: str) -> dict:
-    """タイトル・あらすじ・ページ説明を横断検索し、該当 work_id を返す。"""
+    """書名・著者・要約・本文を横断検索し、該当 work_id を返す。"""
     r = get_root(root)
     return {"work_ids": search.search(r, q)}

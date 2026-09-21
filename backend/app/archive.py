@@ -84,11 +84,17 @@ def _is_image(name: str) -> bool:
     return suffix in IMAGE_EXTENSIONS
 
 
+def _is_metadata_entry(name: str) -> bool:
+    """macOS の zip に入る __MACOSX/ や ._xxx(AppleDouble)は画像ではないので除く。"""
+    parts = name.replace("\\", "/").split("/")
+    return "__MACOSX" in parts or parts[-1].startswith("._")
+
+
 def _image_names(zf: zipfile.ZipFile) -> list[str]:
     names = [
         info.filename
         for info in zf.infolist()
-        if not info.is_dir() and _is_image(info.filename)
+        if not info.is_dir() and _is_image(info.filename) and not _is_metadata_entry(info.filename)
     ]
     names.sort(key=natural_key)
     return names

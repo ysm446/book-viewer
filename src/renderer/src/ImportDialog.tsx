@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   importBooks,
   type ImportCandidate,
@@ -51,6 +51,15 @@ export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }:
   const selected = rows.filter((r) => r.checked && !r.candidate.error)
   const canImport = !busy && selected.length > 0 && selected.every((r) => r.title.trim() !== '')
 
+  // Escape で閉じる(開いた直後は何もフォーカスされていないので window で拾う。取り込み中は無視)。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !busy) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy, onClose])
+
   function update(i: number, patch: Partial<Row>): void {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   }
@@ -83,9 +92,6 @@ export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }:
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && !busy) onClose()
-        }}
       >
         <div className="rename-head">本を取り込む（{candidates.length} 件）</div>
         <div className="import-list">

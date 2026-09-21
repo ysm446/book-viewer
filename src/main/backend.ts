@@ -2,6 +2,7 @@ import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { createServer } from 'net'
+import { randomBytes } from 'crypto'
 import { app } from 'electron'
 
 /**
@@ -15,6 +16,12 @@ import { app } from 'electron'
 export class BackendProcess {
   private proc: ChildProcess | null = null
   private port = 0
+  /** API の合言葉。起動ごとに作り、環境変数でバックエンドへ渡す(無関係なページからの呼び出しを防ぐ)。 */
+  readonly token = randomBytes(24).toString('hex')
+  /** 明示的に stop() で止めている最中か(この間の exit は異常終了として通知しない)。 */
+  private stopping = false
+  /** バックエンドが予期せず終了したときの通知先(レンダラへ知らせる)。 */
+  onUnexpectedExit: ((code: number | null) => void) | null = null
 
   get baseUrl(): string {
     return `http://127.0.0.1:${this.port}`
@@ -58,7 +65,13 @@ export class BackendProcess {
     })
   }
 
+  get isRunning(): boolean {
+    return this.proc !== null
+  }
+
   async start(): Promise<void> {
+    if (this.proc) return
+    this.stopping = false
     this.port = await this.findFreePort()
     const python = this.resolvePython()
 
@@ -69,7 +82,7 @@ export class BackendProcess {
 
     this.proc = spawn(python, args, {
       cwd: this.backendDir,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      env: { ...process.env, PYTHONUNBUFFERED: '1', BOOK_VIEWER_TOKEN: this.token }
     })
 
     this.proc.stdout?.on('data', (d) => console.log(`[backend] ${String(d).trimEnd()}`))
@@ -80,12 +93,22 @@ export class BackendProcess {
       console.error('[backend] 起動に失敗:', err)
       this.proc = null
     })
+    let started = false
     this.proc.on('exit', (code) => {
       console.log(`[backend] exited with code ${code}`)
       this.proc = null
+      // 起動待ちの間の終了は waitForHealth 側で失敗にする。起動後の落ちだけ通知する。
+      if (!this.stopping && started) this.onUnexpectedExit?.(code)
     })
 
     await this.waitForHealth()
+    started = true
+  }
+
+  /** 落ちたバックエンドを起動し直す(ポートは取り直す)。 */
+  async restart(): Promise<void> {
+    await this.stop()
+    await this.start()
   }
 
   private async waitForHealth(timeoutMs = 30000): Promise<void> {
@@ -107,10 +130,12 @@ export class BackendProcess {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true
     // 先に llama-server を停止する(Windows では子プロセスが孤立して残るため)。
     try {
       await fetch(`${this.baseUrl}/api/llm/unload`, {
         method: 'POST',
+        headers: { 'X-Book-Viewer-Token': this.token },
         signal: AbortSignal.timeout(4000)
       })
     } catch {

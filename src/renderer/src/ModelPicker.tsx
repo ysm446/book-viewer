@@ -49,7 +49,7 @@ export function ModelPicker({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal model-picker" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="mp-head">
-          <span className="mp-title">YOUR MODELS</span>
+          <span className="mp-title">モデル</span>
           <button className="icon-btn" onClick={onClose} aria-label="閉じる">
             ✕
           </button>

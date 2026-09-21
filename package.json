@@ -1,7 +1,7 @@
 {
   "name": "book-viewer",
   "version": "0.1.0",
-  "description": "連番画像入り zip を管理・閲覧し、ローカル LLM で分析する漫画ビューワ兼管理ツール",
+  "description": "本のスクリーンショット zip を取り込み、ローカル LLM で本文を Markdown 化・構造化して読みながらチャットできるブックリーダー",
   "main": "./out/main/index.js",
   "author": "ysm446",
   "license": "MIT",

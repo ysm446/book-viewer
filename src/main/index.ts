@@ -70,9 +70,16 @@ function queryNvidiaSmi(): Promise<GpuInfo> {
 let cpuSample: CpuSample = sampleCpus()
 let cachedGpuInfo: GpuInfo = { gpuUsage: null, vramUsed: null, vramTotal: null }
 let systemResourcesInterval: ReturnType<typeof setInterval> | null = null
+let systemResourceSubscribers = 0
+
+function stopSystemResourcePolling(): void {
+  if (systemResourcesInterval) clearInterval(systemResourcesInterval)
+  systemResourcesInterval = null
+}
 
 function startSystemResourcePolling(): void {
   if (systemResourcesInterval) return
+  cpuSample = sampleCpus()
   let gpuQueryInFlight = false
   const refreshGpu = (): void => {
     if (gpuQueryInFlight || nvidiaSmiAvailable === false) return
@@ -159,7 +166,25 @@ function createWindow(): void {
 
 function registerIpc(): void {
   // バックエンドの接続先をレンダラへ知らせる。
-  ipcMain.handle('backend:info', () => ({ baseUrl: backend.baseUrl, port: backend.currentPort }))
+  ipcMain.handle('backend:info', () => ({
+    baseUrl: backend.baseUrl,
+    port: backend.currentPort,
+    token: backend.token
+  }))
+  // バックエンドが落ちたときにレンダラから起動し直す。失敗は例外のまま返す。
+  ipcMain.handle('backend:restart', async () => {
+    await backend.restart()
+    return { baseUrl: backend.baseUrl, port: backend.currentPort, token: backend.token }
+  })
+  // システムリソースの通知は、レンダラが表示している間だけ集める(nvidia-smi の起動を無駄にしない)。
+  ipcMain.on('system:subscribe', () => {
+    systemResourceSubscribers++
+    startSystemResourcePolling()
+  })
+  ipcMain.on('system:unsubscribe', () => {
+    systemResourceSubscribers = Math.max(0, systemResourceSubscribers - 1)
+    if (systemResourceSubscribers === 0) stopSystemResourcePolling()
+  })
 
   // 管理ルート用フォルダ選択ダイアログ。
   ipcMain.handle('dialog:selectFolder', async () => {
@@ -235,7 +260,14 @@ app.whenReady().then(async () => {
     console.error('バックエンド起動失敗:', err)
   }
   createWindow()
-  startSystemResourcePolling()
+  // レンダラの表示が消えたら購読も終わったものとして扱う(リロード時の取りこぼし対策)。
+  mainWindow?.webContents.on('did-start-loading', () => {
+    systemResourceSubscribers = 0
+    stopSystemResourcePolling()
+  })
+  backend.onUnexpectedExit = (code) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('backend:exited', code)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -252,6 +284,6 @@ app.on('will-quit', (e) => {
   // 終了前に llama-server とバックエンドを確実に停止する。
   e.preventDefault()
   cleanedUp = true
-  if (systemResourcesInterval) clearInterval(systemResourcesInterval)
+  stopSystemResourcePolling()
   backend.stop().finally(() => app.quit())
 })

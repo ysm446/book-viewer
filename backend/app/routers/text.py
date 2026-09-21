@@ -57,9 +57,12 @@ def enqueue_transcribe(work_id: str, body: TranscribeRequest) -> dict:
     get_root(body.root)
     if body.engine not in transcribe.ENGINES:
         raise HTTPException(status_code=400, detail="engine は yomitoku / vlm のいずれか")
-    return jobs.enqueue(
-        body.root, work_id, "transcribe", pages=body.pages, force=body.force, engine=body.engine
-    )
+    try:
+        return jobs.enqueue(
+            body.root, work_id, "transcribe", pages=body.pages, force=body.force, engine=body.engine
+        )
+    except jobs.NotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/{work_id}/figures/{name}")

@@ -249,6 +249,12 @@ export function Reader({
   useEffect(() => {
     return () => persist.current(pageRef.current)
   }, [])
+  // ウィンドウを閉じるときは React のアンマウントが走らないので、ここでも保存する。
+  useEffect(() => {
+    const flush = (): void => persist.current(pageRef.current)
+    window.addEventListener('beforeunload', flush)
+    return () => window.removeEventListener('beforeunload', flush)
+  }, [])
 
   // 現在の見開きと次の数ページの縦横比を読み込む(先読みも兼ねる)。
   // 読み込み完了前に effect が再実行されても同じページを二重リクエストしないよう、
@@ -348,6 +354,10 @@ export function Reader({
       // 入力欄(タグ・チャット・設定モーダル等)へのタイピングでは発火させない。
       const t = e.target as HTMLElement | null
       if (t?.closest('input, textarea, select, [contenteditable]')) return
+      // 設定・モデル選択・取り込みなどのモーダルが開いている間は裏のリーダーを動かさない。
+      if (document.querySelector('[aria-modal="true"]')) return
+      // Ctrl+S / Ctrl+B などの修飾キー付きはブラウザや OS の操作なので拾わない。
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       if (e.key === 'Escape') onClose?.()
       else if (e.key === 'ArrowRight') rtl ? prev() : next()
       else if (e.key === 'ArrowLeft') rtl ? next() : prev()
@@ -611,7 +621,7 @@ export function Reader({
               key={i}
               className="reader-image"
               src={pageUrl(root, work.id, i)}
-              alt={`page ${i + 1}`}
+              alt={`p.${i + 1}`}
               draggable={false}
             />
           ))}

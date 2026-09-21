@@ -58,6 +58,7 @@ class _State:
 
 _state = _State()
 _lock = threading.RLock()
+_load_lock = threading.Lock()
 
 
 def find_model(models_dir: str | None) -> Path | None:
@@ -74,12 +75,24 @@ def find_model(models_dir: str | None) -> Path | None:
 
 def running() -> bool:
     with _lock:
-        return _state.proc is not None and _state.proc.poll() is None
+        alive = _state.proc is not None and _state.proc.poll() is None
+        if not alive and _state.proc is not None:
+            # 勝手に落ちていたら片付ける(ログのハンドルを残さない)。
+            _state.proc = None
+            _state.model = None
+            if _state.log is not None:
+                try:
+                    _state.log.close()
+                except OSError:
+                    pass
+                _state.log = None
+        return alive
 
 
 def ensure_server(server_path: str | None, models_dir: str | None, timeout: float = 180.0) -> str:
     """埋め込み用の llama-server を(起動していなければ)起動し、接続先を返す。"""
-    with _lock:
+    # 起動の待ち(最大 timeout 秒)の間に running() を止めないよう、状態のロックとは別に直列化する。
+    with _load_lock:
         if running():
             return EMBED_URL
         binary = llm_server.find_server_binary(server_path)
@@ -92,6 +105,11 @@ def ensure_server(server_path: str | None, models_dir: str | None, timeout: floa
                 "(例: Qwen3-Embedding-4B)を置いてください。"
             )
         host, port = llm_server._parse_host_port(EMBED_URL)
+        # 既にそのポートで何かが応答していれば(前回の孤児など)起動できないので明示エラー。
+        if llm.ping(EMBED_URL):
+            raise EmbeddingError(
+                f"ポート {port} は既に使用中です。前回の埋め込み用 llama-server が残っていれば終了してください。"
+            )
         args = [
             binary,
             "-m",
@@ -113,12 +131,19 @@ def ensure_server(server_path: str | None, models_dir: str | None, timeout: floa
             str(llm_server._auto_ngl(binary)),
         ]
         _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _state.log = open(_LOG_PATH, "w", encoding="utf-8", errors="replace")
-        _state.proc = subprocess.Popen(args, stdout=_state.log, stderr=subprocess.STDOUT)
-        _state.model = model.stem
+        with _lock:
+            _state.log = open(_LOG_PATH, "w", encoding="utf-8", errors="replace")
+            try:
+                _state.proc = subprocess.Popen(args, stdout=_state.log, stderr=subprocess.STDOUT)
+            except OSError as e:
+                _state.log.close()
+                _state.log = None
+                raise EmbeddingError(f"埋め込み用の llama-server を起動できません: {e}") from e
+            _state.model = model.stem
+            proc = _state.proc
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if _state.proc.poll() is not None:
+            if proc.poll() is not None:
                 stop()
                 raise EmbeddingError("埋め込み用の llama-server が起動直後に終了しました。")
             if llm.ping(EMBED_URL):
@@ -164,7 +189,7 @@ def embed(texts: list[str], base_url: str = EMBED_URL) -> list[list[float]]:
         try:
             with urllib.request.urlopen(req, timeout=300) as res:
                 body = json.loads(res.read().decode("utf-8"))
-        except urllib.error.URLError as e:
+        except llm._NETWORK_ERRORS as e:
             raise EmbeddingError(f"埋め込みに失敗しました: {e}") from e
         items = sorted(body.get("data") or [], key=lambda d: d.get("index", 0))
         if len(items) != len(batch):
@@ -216,12 +241,18 @@ def _signature(pages: dict[int, str]) -> str:
     return h.hexdigest()
 
 
+def _lost_head(original: str, joined: str) -> bool:
+    """ページの最初の段落が前のページに寄せられた(つながれた)か。"""
+    first = re.split(r"\n\s*\n", original.strip(), maxsplit=1)[0].strip()
+    return bool(first) and not joined.strip().startswith(first)
+
+
 def _page_texts(root: Path, work_id: str) -> dict[int, str]:
     return {p: transcribe.read_text(root, work_id, p) or "" for p in transcribe.done_pages(root, work_id)}
 
 
-def status(root: Path, work_id: str) -> dict:
-    """索引の状態: {chunks, stale(本文が変わった), model, embedding_model(見つかったもの)}。"""
+def status(root: Path, work_id: str, models_dir: str | None = None) -> dict:
+    """索引の状態: {chunks, stale(本文か埋め込みモデルが変わった), model, updated_at}。"""
     with connect(root) as conn:
         row = conn.execute(
             "SELECT signature, model, chunk_count, updated_at FROM chunk_index WHERE work_id = ?",
@@ -231,9 +262,11 @@ def status(root: Path, work_id: str) -> dict:
         current = _signature(_page_texts(root, work_id))
     except transcribe.TranscribeError:
         current = None
+    model = find_model(models_dir)
+    model_changed = bool(row) and row["model"] is not None and model is not None and row["model"] != model.stem
     return {
         "chunks": row["chunk_count"] if row else 0,
-        "stale": bool(row) and row["signature"] != current,
+        "stale": bool(row) and (row["signature"] != current or model_changed),
         "model": row["model"] if row else None,
         "updated_at": row["updated_at"] if row else None,
     }
@@ -251,7 +284,15 @@ def build_index(
     if not pages:
         raise EmbeddingError("文字起こしされたページがありません。先に文字起こしをしてください。")
     # ページをまたいで切れた段落はつないでから分ける(続きは前のページのまとまりに入る)。
-    chunks = chunk_pages(transcribe.join_pages(root, work_id, pages))
+    joined = transcribe.join_pages(root, work_id, pages)
+    chunks = chunk_pages(joined)
+    # 次のページの書き出しを取り込んだまとまりは page_end = 次のページ。検索で「今のページまで」に
+    # 絞るときにそのまとまりを外し、先の内容が混ざらないようにする。
+    absorbed = {p for p in pages if p + 1 in pages and _lost_head(pages[p + 1], joined[p + 1])}
+    page_end: list[int | None] = []
+    for n, (page, _) in enumerate(chunks):
+        last_of_page = n + 1 == len(chunks) or chunks[n + 1][0] != page
+        page_end.append(page + 1 if last_of_page and page in absorbed else None)
     base_url = ensure_server(server_path, models_dir)
     total = len(chunks)
     vectors: list[bytes] = []
@@ -268,8 +309,11 @@ def build_index(
     with connect(root) as conn:
         conn.execute("DELETE FROM chunks WHERE work_id = ?", (work_id,))
         conn.executemany(
-            "INSERT INTO chunks (work_id, seq, page, text, embedding) VALUES (?, ?, ?, ?, ?)",
-            [(work_id, n, page, text, vectors[n]) for n, (page, text) in enumerate(chunks)],
+            "INSERT INTO chunks (work_id, seq, page, page_end, text, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (work_id, n, page, page_end[n], text, vectors[n])
+                for n, (page, text) in enumerate(chunks)
+            ],
         )
         conn.execute(
             "INSERT INTO chunk_index (work_id, signature, model, chunk_count, updated_at) "
@@ -301,7 +345,7 @@ def search(
     with connect(root) as conn:
         rows = conn.execute(
             "SELECT page, text, embedding FROM chunks WHERE work_id = ?"
-            + (" AND page <= ?" if max_page is not None else "")
+            + (" AND COALESCE(page_end, page) <= ?" if max_page is not None else "")
             + " ORDER BY seq",
             (work_id, max_page) if max_page is not None else (work_id,),
         ).fetchall()
@@ -311,6 +355,10 @@ def search(
     base_url = ensure_server(server_path, models_dir)
     q = np.asarray(embed([_QUERY_PREFIX + query.strip()], base_url)[0], dtype=np.float32)
     mat = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+    if mat.shape[1] != q.shape[0]:
+        raise EmbeddingError(
+            "索引を作ったときと埋め込みモデルが違います。「索引を作る」で作り直してください。"
+        )
     scores = mat @ q  # 正規化済みなので内積 = コサイン類似度
     order = np.argsort(-scores)[:k]
     return [

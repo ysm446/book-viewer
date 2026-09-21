@@ -107,7 +107,8 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
         const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'transcribe')
         if (cur) setJob({ state: 'running', current: cur.current, total: cur.total })
         else if (pending) setJob({ state: 'queued', current: 0, total: 0 })
-        const progressed = cur ? cur.current !== lastCurrent : true
+        // 待機中(まだ始まっていない)は進んでいないので、済みページを取り直さない。
+        const progressed = cur ? cur.current !== lastCurrent : lastCurrent === -1 && !pending
         lastCurrent = cur ? cur.current : -1
         if (progressed) {
           const list = await refreshDone()

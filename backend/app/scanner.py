@@ -32,10 +32,15 @@ def scan(root: Path) -> dict:
             book = library.read_book(book_dir)
             if book is None:
                 continue
-            src = library.source_path(book_dir, book)
-            if not src.is_file():
+            try:
+                src = library.source_path(book_dir, book)
+                if not src.is_file():
+                    continue
+                fid = str(book["id"])
+                pages = int(book.get("page_count") or 0)
+            except (TypeError, ValueError, OSError):
+                # 人が手で直した book.json が壊れていても、その本だけ飛ばす。
                 continue
-            fid = book["id"]
             if fid in seen:
                 # 同じ本フォルダの複製は先に見つけた方だけを使う。
                 continue
@@ -44,7 +49,6 @@ def scan(root: Path) -> dict:
             title = book.get("title") or book_dir.name
             author = book.get("author") or ""
             writing_mode = book.get("writing_mode") or "horizontal"
-            pages = int(book.get("page_count") or 0)
             existing = conn.execute("SELECT id FROM works WHERE id = ?", (fid,)).fetchone()
             if existing is None:
                 conn.execute(
@@ -60,8 +64,11 @@ def scan(root: Path) -> dict:
                     (rel, title, author, writing_mode, pages, fid),
                 )
                 updated += 1
-            # 検索の索引(書名・著者・要約・本文)を更新。
-            search.update_index(conn, root, fid)
+            # 検索の索引(書名・著者・要約・本文)を更新。本文を読む側は別接続で works を
+            # 見るので、先に確定させる(改名直後に古いパスを読んで空の索引になるのを防ぐ)。
+            # 本文が変わっていない本は作り直さない(起動のたびに全冊読まない)。
+            conn.commit()
+            search.update_index(conn, root, fid, book_dir=book_dir, only_if_changed=True)
 
         removed = 0
         prefix = f"%/{library.SOURCE_DIRNAME}/%"

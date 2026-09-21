@@ -350,18 +350,21 @@ def run(
     book_dir, book = _book_dir(root, work_id)
     title = book.get("title") or ""
     page_count = int(book.get("page_count") or 0)
+    # コンテキストの 6 割を上限にする。小さな ctx(4096 など)で 4,000 字に押し上げると
+    # 指示と出力を合わせて溢れるので、下限は 1,500 字に留める。
     limit = (
-        min(max(int(ctx_size * 0.6), 4000), 40000) if ctx_size else _DEFAULT_CHUNK_CHARS
+        min(max(int(ctx_size * 0.6), 1500), 40000) if ctx_size else _DEFAULT_CHUNK_CHARS
     )
     set_progress(work_id, 0, 1, "chapters")
     try:
         chapters = book.get("chapters")
         if redo or not chapters:
+            chapters = detect_chapters(root, work_id, base_url)
             if redo:
-                # 章の区切りが変わると古い要約は合わなくなるので消す。
+                # 章の区切りが変わると古い要約は合わなくなるので消す
+                # (章立てに失敗したときに要約だけ消えないよう、成功してから)。
                 for f in (book_dir / SUMMARIES_DIRNAME).glob("*"):
                     f.unlink(missing_ok=True)
-            chapters = detect_chapters(root, work_id, base_url)
         ranges = chapter_ranges(chapters, page_count)
         # 要約には、ページをまたいで切れた段落をつないだ本文を渡す。
         texts = transcribe.join_pages(root, work_id, _page_texts(root, work_id))

@@ -48,10 +48,17 @@ def title_from_filename(path: Path) -> str:
     return title or stem
 
 
+_RESERVED_RE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$", re.IGNORECASE)
+
+
 def sanitize_dirname(name: str) -> str:
     """書名をフォルダ名に使える形にする(末尾の空白・ピリオドも落とす)。"""
     cleaned = _INVALID_CHARS_RE.sub("_", name).strip().rstrip(". ")
-    return cleaned[:_MAX_DIRNAME].rstrip(". ") or "untitled"
+    cleaned = cleaned[:_MAX_DIRNAME].rstrip(". ") or "untitled"
+    # Windows の予約名(CON / NUL / COM1 など)はフォルダにできないので末尾に _ を足す。
+    if _RESERVED_RE.match(cleaned):
+        cleaned += "_"
+    return cleaned
 
 
 def unique_dir(root: Path, name: str) -> Path:

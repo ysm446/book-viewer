@@ -12,6 +12,7 @@
   --accent: #4c8de5;
   --accent-soft: rgba(76, 141, 229, 0.14);
   --danger: #ff8a8a;
+  --warn: #e5b04c;
   color-scheme: dark;
 }
 
@@ -253,7 +254,14 @@ input[type='checkbox']:focus-visible {
   display: block;
   height: 100%;
   border-radius: 999px;
+  background: var(--text-sub);
   transition: width 0.5s ease-out;
+}
+.res-fill.is-warn {
+  background: var(--warn);
+}
+.res-fill.is-high {
+  background: var(--danger);
 }
 .res-detail {
   font-size: 10px;

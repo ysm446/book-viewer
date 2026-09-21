@@ -45,14 +45,6 @@ class Figure:
     caption: str
 
 
-def available() -> bool:
-    try:
-        import yomitoku  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 def _get_analyzer():
     global _analyzer
     with _lock:
@@ -281,7 +273,16 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
 
     img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
-        raise RuntimeError("画像を読み込めません")
+        # OpenCV が読めない形式(GIF など)は Pillow で開き直す。
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            with Image.open(BytesIO(image_bytes)) as im:
+                img = cv2.cvtColor(np.asarray(im.convert("RGB")), cv2.COLOR_RGB2BGR)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"画像を読み込めません: {e}") from e
     analyzer = _get_analyzer()
     with _lock:  # モデルはスレッドセーフとは限らないので直列に使う
         result, _, _ = analyzer(img)
@@ -364,16 +365,34 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
             )
 
     figures: list[Figure] = []
+
+    def _keep_captions(i: int) -> None:
+        # 図にしない領域(小さすぎる飾りなど)のキャプションは、本文の段落として残す
+        # (章の扉の題名や短い引用が黙って消えないように)。
+        for n, text in enumerate(captions.get(i, [])):
+            body.append(
+                {
+                    "order": (regions[i].get("order", 0), n),
+                    "kind": "p",
+                    "text": text,
+                    "role": None,
+                    "continues": False,
+                }
+            )
+
     for i, r in enumerate(regions):
         x1, y1, x2, y2 = (int(v) for v in r["box"])
         # 章番号の飾りなど、小さすぎる領域は図として扱わない。
         if x2 - x1 < _MIN_FIGURE_PX and y2 - y1 < _MIN_FIGURE_PX:
+            _keep_captions(i)
             continue
         crop = img[max(0, y1) : y2, max(0, x1) : x2]
         if crop.size == 0:
+            _keep_captions(i)
             continue
         ok, buf = cv2.imencode(".png", crop)
         if not ok:
+            _keep_captions(i)
             continue
         caption = " ".join(captions.get(i, []))
         if not caption and r.get("inner"):

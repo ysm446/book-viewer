@@ -143,7 +143,19 @@ export function ReaderChat({
     setTemplateOffset(0)
     void refreshSuggestions([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [work.id, dynamicSuggestions])
+  }, [work.id])
+
+  // 設定の「内容から質問候補を作る」が切り替わったら、会話は残したまま候補だけ取り直す。
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      return
+    }
+    setDynamicQuestions([])
+    void refreshSuggestions(messages)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dynamicSuggestions])
 
   // 新しい発言が来たら末尾までスクロールする(末尾付近にいるときのみ)。
   // 候補チップも会話の末尾にあるので、差し替わったときも下端へ寄せる。
@@ -262,8 +274,11 @@ export function ReaderChat({
       )
     } finally {
       setBusy(false)
-      // 会話を踏まえたフォローアップ質問へ差し替える(中断・失敗時はそのまま)。
-      if (content) void refreshSuggestions([...base, { role: 'assistant', content }])
+      // 会話を踏まえたフォローアップ質問へ差し替える(中断・失敗時はそのまま。
+      // パネルを閉じた直後に LLM を呼び直さないよう、中断済みなら何もしない)。
+      if (content && !controller.signal.aborted) {
+        void refreshSuggestions([...base, { role: 'assistant', content }])
+      }
     }
   }
 

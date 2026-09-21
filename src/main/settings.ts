@@ -117,7 +117,14 @@ export function getSettings(): AppSettings {
       if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
         llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT
       }
-      return { ...DEFAULTS, ...parsed, llm }
+      // トップレベルも既知の項目だけを残す(旧 manga-viewer 時代のキーを引きずらない)。
+      const top = { ...DEFAULTS }
+      for (const key of Object.keys(DEFAULTS) as (keyof AppSettings)[]) {
+        if (key !== 'llm' && key in parsed) {
+          ;(top as Record<string, unknown>)[key] = (parsed as Record<string, unknown>)[key]
+        }
+      }
+      return { ...top, llm }
     } catch {
       // 壊れたファイルは既定値で上書きせず退避し、既定値で動かす(復旧の余地を残す)。
       try {

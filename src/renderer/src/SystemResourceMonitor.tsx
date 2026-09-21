@@ -3,12 +3,12 @@ import type { SystemResources } from '../../preload'
 
 function ResourceBar({ label, pct, detail }: { label: string; pct: number; detail: string }): JSX.Element {
   const clamped = Math.min(100, Math.max(0, pct))
-  const color = clamped > 85 ? '#ef4444' : clamped > 65 ? '#f97316' : 'var(--accent)'
+  const level = clamped > 85 ? 'is-high' : clamped > 65 ? 'is-warn' : ''
   return (
     <div className="res-item">
       <span className="res-label">{label}</span>
       <span className="res-track">
-        <span className="res-fill" style={{ width: `${clamped}%`, background: color }} />
+        <span className={`res-fill ${level}`} style={{ width: `${clamped}%` }} />
       </span>
       <span className="res-detail">{detail}</span>
     </div>
