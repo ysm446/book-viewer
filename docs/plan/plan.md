@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-09-21 23:40
+更新日時: 2026-09-22 00:30
 
 目的と完成形は [goals.md](goals.md)、現在の進捗は [progress.md](progress.md)。
 
@@ -97,7 +97,11 @@
   - 文字の入った横長の「図」は節見出しの飾り枠とみなして見出しにする(ページ上端のものは柱として捨てる)。
 - Vision LLM(設定で切り替え)は、電子書籍の画面の書名・ページ表示を指示で除き、見開きは書字方向に
   応じた順で読ませる。画像は最大 1.5 倍に拡大して渡す。図は `[図: キャプション]` だけ残す。
-- API: `GET /api/works/{id}/text`、`GET /api/works/{id}/text/{n}`、`POST /api/works/{id}/transcribe`
+- 本文の手修正: テキスト表示のページごとの「編集」(左に原本、右に Markdown)。YomiToku の行ごとの
+  確信度(`rec_score`)が 0.6 未満の本文の行を「要確認」として `pages/0001.json` の `low` に残す
+  (サンプルでは誤読がこの範囲に集まっていた)。保存すると `edited: true` になり、直した行は `low` から外れる。
+  全ページのやり直しは `edited` のページを飛ばす。
+- API: `GET /api/works/{id}/text`、`GET|PUT /api/works/{id}/text/{n}`、`POST /api/works/{id}/transcribe`
   (`engine`: `yomitoku` / `vlm`)、`GET /api/works/{id}/figures/{name}`。
 
 ## 取り込み後の処理パイプライン(予定)

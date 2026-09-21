@@ -6,6 +6,10 @@ import {
   getAnalysisQueue,
   getPageText,
   getTextPages,
+  pageUrl,
+  savePageText,
+  type LowLine,
+  type PageText,
   type TranscribeEngine,
   type Work
 } from './api'
@@ -27,12 +31,23 @@ const FIGURE_SRC_RE = /^\.\.\/figures\/(p\d{4}-\d+\.png)$/
 
 type Job = { state: 'queued' | 'running'; current: number; total: number } | null
 
+/** 編集中のページ(原本と見比べて本文を直す)。 */
+interface Editing {
+  page: number
+  draft: string
+  low: LowLine[]
+}
+
 /**
  * リーダーのテキスト表示。本フォルダの pages/*.md を Markdown として描画し、
  * 未処理のページは文字起こしを解析キューへ積める。縦書きの本は縦書きで組む。
  */
 export function TextView({ root, work, pages, vertical, engine }: Props): JSX.Element {
-  const [texts, setTexts] = useState<Record<number, string | null>>({})
+  const [texts, setTexts] = useState<Record<number, PageText | null>>({})
+  const [editing, setEditing] = useState<Editing | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [zoom, setZoom] = useState(false)
+  const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const [done, setDone] = useState<Set<number> | null>(null)
   const [job, setJob] = useState<Job>(null)
   const [error, setError] = useState<string | null>(null)
@@ -141,6 +156,45 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
     }
   }
 
+  function startEdit(p: number): void {
+    const t = texts[p]
+    if (!t) return
+    setError(null)
+    setEditing({ page: p, draft: t.markdown, low: t.low })
+  }
+
+  // 要確認の行を編集欄で選択し、そこまでスクロールする。
+  function selectLow(text: string): void {
+    const area = areaRef.current
+    if (!area || !editing) return
+    const at = editing.draft.indexOf(text)
+    if (at < 0) return
+    // いったん外してから focus し直すと、選択位置までスクロールされる。
+    area.blur()
+    area.setSelectionRange(at, at + text.length)
+    area.focus()
+  }
+
+  async function saveEdit(): Promise<void> {
+    if (!editing) return
+    setSaving(true)
+    setError(null)
+    try {
+      const saved = await savePageText(root, work.id, editing.page, editing.draft)
+      setTexts((m) => ({ ...m, [editing.page]: saved }))
+      setEditing(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 表示ページが変わったら編集を閉じる(別のページの原本と取り違えないように)。
+  useEffect(() => {
+    setEditing((e) => (e && !pages.includes(e.page) ? null : e))
+  }, [pages])
+
   const doneCount = done?.size ?? 0
   const remaining = work.page_count - doneCount
   const pct = job && job.total > 0 ? Math.round((job.current / job.total) * 100) : 0
@@ -185,7 +239,7 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
             onClick={() => {
               if (
                 window.confirm(
-                  `全 ${work.page_count} ページを文字起こしし直します。手で直した本文があれば上書きされます。よろしいですか？`
+                  `全 ${work.page_count} ページを文字起こしし直します（手で直したページはそのまま残します）。よろしいですか？`
                 )
               ) {
                 void transcribe(undefined, true)
@@ -207,6 +261,60 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
         </button>
       </div>
       {error && <div className="text-error">エラー: {error}</div>}
+      {editing ? (
+        <div className="text-edit">
+          <div className={`text-edit-image ${zoom ? 'is-zoomed' : ''}`}>
+            <img
+              src={pageUrl(root, work.id, editing.page)}
+              alt={`p.${editing.page + 1} の原本`}
+              draggable={false}
+              onClick={() => setZoom((z) => !z)}
+              title={zoom ? 'クリックで全体表示' : 'クリックで拡大'}
+            />
+          </div>
+          <div className="text-edit-side">
+            <div className="text-edit-head">
+              <span className="text-toolbar-note">p.{editing.page + 1} の本文を編集（Markdown）</span>
+              <span className="text-toolbar-spacer" />
+              <button className="btn" onClick={() => setEditing(null)} disabled={saving}>
+                キャンセル
+              </button>
+              <button className="btn btn-primary" onClick={() => void saveEdit()} disabled={saving}>
+                {saving ? '保存中…' : '保存'}
+              </button>
+            </div>
+            {editing.low.length > 0 && (
+              <div className="text-edit-low">
+                <span className="text-toolbar-note">読み取りに自信がない行（クリックで選択）</span>
+                {editing.low.map((l, i) => (
+                  <button
+                    key={i}
+                    className="text-edit-low-item"
+                    onClick={() => selectLow(l.text)}
+                    title={`確信度 ${Math.round(l.score * 100)}%`}
+                  >
+                    {l.text}
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={areaRef}
+              className="text-edit-area"
+              value={editing.draft}
+              spellCheck={false}
+              onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  void saveEdit()
+                }
+              }}
+              aria-label="本文"
+            />
+          </div>
+        </div>
+      ) : (
       <div
         key={pages.join(',')}
         className={`text-scroll ${vertical ? 'is-vertical' : ''}`}
@@ -220,7 +328,25 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
           const t = texts[p]
           return (
             <section key={p} className="text-page">
-              <div className="text-page-no">p.{p + 1}</div>
+              <div className="text-page-no">
+                p.{p + 1}
+                {t && t.low.length > 0 && (
+                  <span className="text-page-badge" title="読み取りに自信がない行があります">
+                    要確認 {t.low.length}
+                  </span>
+                )}
+                {t?.edited && <span className="text-page-badge">手直し済み</span>}
+                {t && (
+                  <button
+                    className="text-page-edit"
+                    onClick={() => startEdit(p)}
+                    disabled={!!job}
+                    title="原本と見比べて本文を直す"
+                  >
+                    編集
+                  </button>
+                )}
+              </div>
               {t === undefined ? (
                 <div className="text-empty">読み込み中…</div>
               ) : t === null ? (
@@ -234,11 +360,11 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
                     このページを文字起こし
                   </button>
                 </div>
-              ) : t.trim() === '' ? (
+              ) : t.markdown.trim() === '' ? (
                 <div className="text-empty">（本文なし）</div>
               ) : (
                 <Markdown
-                  text={t}
+                  text={t.markdown}
                   className="book-md"
                   resolveImage={(src) => {
                     const m = src.match(FIGURE_SRC_RE)
@@ -250,6 +376,7 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
           )
         })}
       </div>
+      )}
     </div>
   )
 }

@@ -20,10 +20,26 @@ def text_status(work_id: str, root: str) -> dict:
 
 @router.get("/{work_id}/text/{index}")
 def page_text(work_id: str, index: int, root: str) -> dict:
-    """ページの本文(Markdown)を返す。未処理なら markdown は null。"""
+    """ページの本文(Markdown)・確信度の低い行・手で直したか。未処理なら markdown は null。"""
     r = get_root(root)
     try:
-        return {"markdown": transcribe.read_text(r, work_id, index)}
+        page = transcribe.read_page(r, work_id, index)
+    except transcribe.TranscribeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return page or {"markdown": None, "low": [], "edited": False}
+
+
+class TextUpdate(BaseModel):
+    root: str
+    markdown: str
+
+
+@router.put("/{work_id}/text/{index}")
+def save_page_text(work_id: str, index: int, body: TextUpdate) -> dict:
+    """手で直した本文を保存する(全ページのやり直しでは上書きされなくなる)。"""
+    r = get_root(body.root)
+    try:
+        return transcribe.save_text(r, work_id, index, body.markdown)
     except transcribe.TranscribeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -21,6 +21,9 @@ _lock = threading.Lock()
 _CAPTION_MARGIN = 48
 # これより小さい(縦横とも)領域は図にしない(章番号の飾り文字など)。
 _MIN_FIGURE_PX = 80
+# 読み取りの確信度(行ごとの rec_score)がこれ未満の本文の行を「要確認」とする。
+# サンプルでは 0.6 未満の行に誤読(橄欖→橄横、括弧、ダッシュ→「一」など)が集まっていた。
+_LOW_SCORE = 0.6
 # キャプションの無い図に、代わりに添える図中の文字の上限(目次ページなどは長いため)。
 _INNER_TEXT_MAX = 2000
 # 幅が高さのこの倍を超え、中に文字がある「図」は見出しの帯とみなす。
@@ -164,8 +167,28 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
     return [t for t in paras if t], first_indented
 
 
-def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
-    """画像を文字起こしし、(Markdown, 図のリスト) を返す。
+def _low_confidence(
+    words: list[dict], paragraphs: list[dict], page_char: float, markdown: str
+) -> list[dict]:
+    """本文の中で読み取りの確信度が低い行 [{text, score}](要確認の候補)。"""
+    out = []
+    for w in words:
+        score = float(w.get("rec_score", 1.0))
+        text = (w.get("content") or "").strip()
+        if score >= _LOW_SCORE or len(text) < 2:
+            continue
+        if page_char > 0 and _word_size(w) < page_char * 0.7:
+            continue  # ルビ
+        cx, cy = _center(w)
+        if not any(p["box"][0] <= cx <= p["box"][2] and p["box"][1] <= cy <= p["box"][3] for p in paragraphs):
+            continue  # 本文以外(柱・ページ表示・図の中の文字)
+        if text in markdown:
+            out.append({"text": text, "score": round(score, 2)})
+    return out
+
+
+def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict]]:
+    """画像を文字起こしし、(Markdown, 図のリスト, 確信度の低い行) を返す。
 
     Markdown 中の図は ![キャプション](FIGURE:k) の仮参照で、k は図のリストの添字。
     呼び出し側が保存先に合わせて置き換える。
@@ -295,4 +318,5 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
         else:
             lines.append(item["text"])
             last_text = len(lines) - 1
-    return "\n\n".join(lines), figures
+    markdown = "\n\n".join(lines)
+    return markdown, figures, _low_confidence(words, paragraphs, page_char, markdown)

@@ -113,7 +113,7 @@ def run_bookviewer(pages: list[dict]) -> None:
     for p in pages:
         raw = (WORK / "images" / f"{p['id']}.png").read_bytes()
         t = time.time()
-        md, _ = layout_ocr.transcribe(raw)
+        md, _, _ = layout_ocr.transcribe(raw)
         times[p["id"]] = time.time() - t
         results[p["id"]] = md
         print("bookviewer", p["id"], round(times[p["id"]], 2), flush=True)

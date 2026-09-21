@@ -1215,11 +1215,119 @@ input[type='checkbox']:focus-visible {
   border-block-start: 1px solid var(--border);
 }
 .text-page-no {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-block-end: 8px;
   font-size: 11px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   user-select: none;
+}
+.text-page-badge {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-sub);
+}
+.text-page-edit {
+  height: 24px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-sub);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.text-page-edit:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.text-page-edit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 本文の編集: 左に原本、右に Markdown の編集欄 */
+.text-edit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.text-edit-image {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+}
+.text-edit-image img {
+  display: block;
+  width: 100%;
+  cursor: zoom-in;
+}
+.text-edit-image.is-zoomed img {
+  width: auto;
+  max-width: none;
+  cursor: zoom-out;
+}
+.text-edit-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.text-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.text-edit-low {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-height: 30%;
+  overflow-y: auto;
+}
+.text-edit-low-item {
+  max-width: 100%;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.text-edit-low-item:hover {
+  background: var(--panel-3);
+}
+.text-edit-area {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: none;
+  user-select: text;
+}
+.text-edit-area:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .text-empty {
   display: flex;

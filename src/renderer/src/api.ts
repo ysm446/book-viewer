@@ -383,12 +383,44 @@ export async function getTextPages(root: string, workId: string): Promise<number
   return data.pages
 }
 
-/** ページの本文(Markdown)。未処理なら null。 */
-export async function getPageText(root: string, workId: string, index: number): Promise<string | null> {
-  const data = await jsonFetch<{ markdown: string | null }>(
+/** 読み取りの確信度が低い本文の行(要確認の候補)。 */
+export interface LowLine {
+  text: string
+  score: number
+}
+
+/** ページの本文と補助情報。 */
+export interface PageText {
+  markdown: string
+  /** 確信度の低い行 */
+  low: LowLine[]
+  /** 手で直したページか(全ページのやり直しでは上書きしない) */
+  edited: boolean
+}
+
+/** ページの本文(Markdown)と補助情報。未処理なら null。 */
+export async function getPageText(
+  root: string,
+  workId: string,
+  index: number
+): Promise<PageText | null> {
+  const data = await jsonFetch<{ markdown: string | null; low: LowLine[]; edited: boolean }>(
     `/works/${workId}/text/${index}?root=${encodeURIComponent(root)}`
   )
-  return data.markdown
+  return data.markdown === null ? null : { markdown: data.markdown, low: data.low, edited: data.edited }
+}
+
+/** 手で直した本文を保存する。 */
+export async function savePageText(
+  root: string,
+  workId: string,
+  index: number,
+  markdown: string
+): Promise<PageText> {
+  return jsonFetch(`/works/${workId}/text/${index}`, {
+    method: 'PUT',
+    body: JSON.stringify({ root, markdown })
+  })
 }
 
 /** 文字起こしのエンジン。yomitoku は LLM 不要、vlm は読み込み済みの Vision LLM を使う。 */

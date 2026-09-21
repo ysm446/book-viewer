@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -117,6 +119,57 @@ def page_path(book_dir: Path, index: int) -> Path:
     return book_dir / PAGES_DIRNAME / f"{index + 1:04d}.md"
 
 
+def meta_path(book_dir: Path, index: int) -> Path:
+    """ページの補助情報 pages/0001.json(エンジン・確信度の低い行・手で直したか)。"""
+    return book_dir / PAGES_DIRNAME / f"{index + 1:04d}.json"
+
+
+def _read_meta(book_dir: Path, index: int) -> dict:
+    try:
+        data = json.loads(meta_path(book_dir, index).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_meta(book_dir: Path, index: int, meta: dict) -> None:
+    path = meta_path(book_dir, index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def read_page(root: Path, work_id: str, index: int) -> dict | None:
+    """編集画面用: {markdown, low(確信度の低い行), edited(手で直したか)}。未処理なら None。"""
+    book_dir, _, _ = _book(root, work_id)
+    path = page_path(book_dir, index)
+    if not path.is_file():
+        return None
+    meta = _read_meta(book_dir, index)
+    return {
+        "markdown": path.read_text(encoding="utf-8"),
+        "low": meta.get("low") or [],
+        "edited": bool(meta.get("edited")),
+    }
+
+
+def save_text(root: Path, work_id: str, index: int, markdown: str) -> dict:
+    """手で直した本文を保存する。以後「全ページやり直す」では上書きしない。"""
+    book_dir, _, row = _book(root, work_id)
+    if not 0 <= index < row["page_count"]:
+        raise TranscribeError("ページが範囲外です")
+    text = markdown.replace("\r\n", "\n").strip()
+    _write(page_path(book_dir, index), text)
+    meta = _read_meta(book_dir, index)
+    # 直した行は要確認から外す(元の文字列のまま残っている行だけ残す)。
+    meta["low"] = [x for x in meta.get("low") or [] if x.get("text") and x["text"] in text]
+    meta["edited"] = True
+    meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_meta(book_dir, index, meta)
+    return read_page(root, work_id, index) or {}
+
+
 _FIGURE_NAME_RE = re.compile(r"^p\d{4}-\d+\.png$")
 
 
@@ -154,9 +207,9 @@ def _figure_name(index: int, k: int) -> str:
     return f"p{index + 1:04d}-{k + 1}.png"
 
 
-def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> str:
-    """YomiToku で文字起こしし、図を figures/ に保存した Markdown を返す。"""
-    markdown, figures = layout_ocr.transcribe(raw)
+def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> tuple[str, list[dict]]:
+    """YomiToku で文字起こしし、図を figures/ に保存した (Markdown, 確信度の低い行) を返す。"""
+    markdown, figures, low = layout_ocr.transcribe(raw)
     fig_dir = book_dir / FIGURES_DIRNAME
     # やり直しのときに前回の図が残らないよう、このページの図を消してから書く。
     for old in fig_dir.glob(f"p{index + 1:04d}-*.png"):
@@ -166,7 +219,7 @@ def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> str:
         name = _figure_name(index, k)
         (fig_dir / name).write_bytes(fig.png)
         markdown = markdown.replace(f"(FIGURE:{k})", f"(../{FIGURES_DIRNAME}/{name})")
-    return markdown
+    return markdown, low
 
 
 def _write(path: Path, text: str) -> None:
@@ -188,7 +241,8 @@ def transcribe_pages(
 ) -> int:
     """指定ページ(省略時は未処理の全ページ)を文字起こしして保存し、処理したページ数を返す。
 
-    force=False なら既に Markdown があるページは飛ばす。
+    force=False なら既に Markdown があるページは飛ばす。force=True でも pages を省略したとき
+    (全ページのやり直し)は、手で直したページは飛ばす。ページを指定したときは上書きする。
     engine="vlm" のときは base_url(読み込み済みの llama-server)が必要。
     """
     if engine not in ENGINES:
@@ -200,6 +254,8 @@ def transcribe_pages(
     targets = list(range(count)) if pages is None else [p for p in pages if 0 <= p < count]
     if not force:
         targets = [p for p in targets if not page_path(book_dir, p).exists()]
+    elif pages is None:
+        targets = [p for p in targets if not _read_meta(book_dir, p).get("edited")]
     total = len(targets)
     text_prompt = prompt(row["writing_mode"])
     set_progress(work_id, 0, total, "transcribe")
@@ -208,8 +264,9 @@ def transcribe_pages(
             if cancel_check and cancel_check():
                 raise Cancelled()
             raw, _ = archive.read_page(archive_path, idx)
+            low: list[dict] = []
             if engine == "yomitoku":
-                text = _transcribe_yomitoku(book_dir, idx, raw)
+                text, low = _transcribe_yomitoku(book_dir, idx, raw)
             else:
                 out = llm.chat(
                     base_url,
@@ -219,6 +276,16 @@ def transcribe_pages(
                 )
                 text = clean_output(out)
             _write(page_path(book_dir, idx), text)
+            _write_meta(
+                book_dir,
+                idx,
+                {
+                    "engine": engine,
+                    "low": low,
+                    "edited": False,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             set_progress(work_id, n + 1, total, "transcribe")
     finally:
         clear_progress(work_id)
