@@ -57,10 +57,14 @@ def _reading_context(
     except transcribe.TranscribeError:
         return [], None, None
     pages = [p for p in done if current_page is None or p <= current_page]
+    # ページをまたいで切れた段落はつなぐ(先のページは渡していないので持ち込まない)。
+    texts = transcribe.join_pages(
+        root, work_id, {p: transcribe.read_text(root, work_id, p) or "" for p in pages}
+    )
     picked: list[tuple[int, str]] = []
     used = 0
     for p in reversed(pages):
-        text = transcribe.plain_for_llm(transcribe.read_text(root, work_id, p) or "")
+        text = transcribe.plain_for_llm(texts[p])
         if not text:
             continue
         if picked and used + len(text) > budget:

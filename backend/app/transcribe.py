@@ -223,13 +223,85 @@ def done_pages(root: Path, work_id: str) -> list[int]:
     return sorted(out)
 
 
+# ---- ページをまたぐ段落のつなぎ ----
+
+_BLOCK_RE = re.compile(r"\n\s*\n")
+# 本文の段落ではないブロック(見出し・図・表・リスト・引用・コード・数式)。
+_NOT_PROSE_RE = re.compile(r"^(#|!\[|\||[-*+]\s|\d+\.\s|>|```|\$\$)")
+_END_MARKUP_RE = re.compile(r"(</?ruby>|<rt>.*?</rt>|\*+)$")
+# 前のページの最後の段落がこれより短ければ、句読点が無くても文章の書き出しとみなす。
+_SHORT_TAIL = 30
+
+
+def _ends_mid_sentence(block: str) -> bool:
+    text = block.strip()
+    while True:  # 末尾のルビや太字の記号は文の終わりの判定に使わない
+        stripped = _END_MARKUP_RE.sub("", text).rstrip()
+        if stripped == text:
+            break
+        text = stripped
+    return bool(text) and not text.endswith(layout_ocr.SENTENCE_END)
+
+
+def joins_previous(prev_markdown: str, markdown: str, head_continues: bool | None = None) -> bool:
+    """このページの最初の段落が、前のページの最後の段落の続きか。
+
+    前のページが本文の段落で終わっていて文の途中(「。」などで終わらない)、このページが
+    本文の段落で始まるときに続きとみなす。YomiToku で読んだページは、先頭が字下げされて
+    いれば(head_continues=False)新しい段落なのでつながない。
+    """
+    if head_continues is False:
+        return False
+    prev_blocks = [b for b in _BLOCK_RE.split(prev_markdown.strip()) if b.strip()]
+    blocks = [b for b in _BLOCK_RE.split(markdown.strip()) if b.strip()]
+    if not prev_blocks or not blocks:
+        return False
+    last, first = prev_blocks[-1].strip(), blocks[0].strip()
+    if _NOT_PROSE_RE.match(last) or _NOT_PROSE_RE.match(first):
+        return False
+    # 句読点の無い並び(奥付・目次・参考文献・表の文字)は文章ではないのでつながない。
+    # 前のページ側が短い(最後の行で始まった段落)ときは句読点が無くてもよい。
+    if "。" not in last + first:
+        return False
+    tail = _TAG_RE.sub("", _RT_RE.sub("", last))
+    if len(tail) >= _SHORT_TAIL and "、" not in tail and "。" not in tail:
+        return False
+    return _ends_mid_sentence(last)
+
+
+def join_pages(root: Path, work_id: str, texts: dict[int, str]) -> dict[int, str]:
+    """ページごとの本文(Markdown)の、ページをまたいで切れた段落をつないだものを返す。
+
+    続きの部分(次のページの最初の段落)は前のページの最後の段落に寄せる。つなぐのは
+    texts に前後のページが両方あるときだけ(渡していない先のページの文は持ち込まない)。
+    ページのファイル(本文の正本)は変えない。LLM・索引・検索に渡す本文に使う。
+    """
+    book_dir, _, _ = _book(root, work_id)
+    out = dict(texts)
+    for p in sorted(texts):
+        if p - 1 not in out:
+            continue
+        head = _read_meta(book_dir, p).get("head_continues")
+        if not joins_previous(out[p - 1], out[p], head):
+            continue
+        prev_blocks = _BLOCK_RE.split(out[p - 1].rstrip())
+        first, *rest = _BLOCK_RE.split(out[p].strip(), maxsplit=1)
+        tail = prev_blocks[-1].rstrip()
+        # 英単語どうしが切れていたら空白を入れる(日本語は詰める)。
+        sep = " " if tail[-1:].isascii() and tail[-1:].isalnum() and first[:1].isascii() and first[:1].isalnum() else ""
+        prev_blocks[-1] = tail + sep + first.strip()
+        out[p - 1] = "\n\n".join(prev_blocks)
+        out[p] = rest[0] if rest else ""
+    return out
+
+
 def _figure_name(index: int, k: int) -> str:
     return f"p{index + 1:04d}-{k + 1}.png"
 
 
-def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> tuple[str, list[dict]]:
-    """YomiToku で文字起こしし、図を figures/ に保存した (Markdown, 確信度の低い行) を返す。"""
-    markdown, figures, low = layout_ocr.transcribe(raw)
+def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> tuple[str, list[dict], bool]:
+    """YomiToku で文字起こしし、図を figures/ に保存した (Markdown, 確信度の低い行, 先頭が続きか) を返す。"""
+    markdown, figures, low, head_continues = layout_ocr.transcribe(raw)
     fig_dir = book_dir / FIGURES_DIRNAME
     # やり直しのときに前回の図が残らないよう、このページの図を消してから書く。
     for old in fig_dir.glob(f"p{index + 1:04d}-*.png"):
@@ -239,7 +311,7 @@ def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> tuple[str, l
         name = _figure_name(index, k)
         (fig_dir / name).write_bytes(fig.png)
         markdown = markdown.replace(f"(FIGURE:{k})", f"(../{FIGURES_DIRNAME}/{name})")
-    return markdown, low
+    return markdown, low, head_continues
 
 
 def _write(path: Path, text: str) -> None:
@@ -285,8 +357,9 @@ def transcribe_pages(
                 raise Cancelled()
             raw, _ = archive.read_page(archive_path, idx)
             low: list[dict] = []
+            head_continues: bool | None = None  # VLM では分からない(本文だけで判断する)
             if engine == "yomitoku":
-                text, low = _transcribe_yomitoku(book_dir, idx, raw)
+                text, low, head_continues = _transcribe_yomitoku(book_dir, idx, raw)
             else:
                 out = llm.chat(
                     base_url,
@@ -296,16 +369,15 @@ def transcribe_pages(
                 )
                 text = clean_output(out)
             _write(page_path(book_dir, idx), text)
-            _write_meta(
-                book_dir,
-                idx,
-                {
-                    "engine": engine,
-                    "low": low,
-                    "edited": False,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+            meta = {
+                "engine": engine,
+                "low": low,
+                "edited": False,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if head_continues is not None:
+                meta["head_continues"] = head_continues
+            _write_meta(book_dir, idx, meta)
             set_progress(work_id, n + 1, total, "transcribe")
     finally:
         clear_progress(work_id)

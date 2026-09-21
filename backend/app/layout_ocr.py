@@ -29,7 +29,7 @@ _INNER_TEXT_MAX = 2000
 # 幅が高さのこの倍を超え、中に文字がある「図」は見出しの帯とみなす。
 _BANNER_RATIO = 4
 # 段落がここで終わっていれば、次の段落とはつながない。
-_SENTENCE_END = ("。", "」", "』", ")", "）", "！", "？", "!", "?")
+SENTENCE_END = ("。", "」", "』", ")", "）", "！", "？", "!", "?")
 _CAPTION_RE = re.compile(r"^\s*(図|表|写真|グラフ)\s*[0-9０-９]")
 
 
@@ -187,11 +187,13 @@ def _low_confidence(
     return out
 
 
-def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict]]:
-    """画像を文字起こしし、(Markdown, 図のリスト, 確信度の低い行) を返す。
+def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]:
+    """画像を文字起こしし、(Markdown, 図のリスト, 確信度の低い行, 先頭が前ページの続きか) を返す。
 
     Markdown 中の図は ![キャプション](FIGURE:k) の仮参照で、k は図のリストの添字。
     呼び出し側が保存先に合わせて置き換える。
+    「先頭が前ページの続きか」は、最初の要素が字下げなしで始まる本文の段落のとき True
+    (前のページの段落が文の途中で終わっていれば、つなぐ候補になる)。
     """
     import cv2
     import numpy as np
@@ -301,7 +303,14 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict]]:
 
     lines: list[str] = []
     last_text: int | None = None  # 直近の本文段落の位置(見出しをまたいだらつながない)
-    for item in sorted(body, key=lambda b: b["order"]):
+    ordered = sorted(body, key=lambda b: b["order"])
+    head_continues = bool(
+        ordered
+        and ordered[0]["kind"] == "p"
+        and ordered[0]["role"] != "section_headings"
+        and ordered[0]["continues"]
+    )
+    for item in ordered:
         if item["kind"] == "fig":
             alt = item["text"].replace("[", "(").replace("]", ")")
             lines.append(f"![{alt}](FIGURE:{item['index']})")
@@ -311,7 +320,7 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict]]:
         elif (
             item["continues"]
             and last_text is not None
-            and not lines[last_text].endswith(_SENTENCE_END)
+            and not lines[last_text].endswith(SENTENCE_END)
         ):
             # 文の途中で段落が切れている(見開きの境目・図をはさんだ続きなど)ので前の段落につなぐ。
             lines[last_text] += item["text"]
@@ -319,4 +328,4 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict]]:
             lines.append(item["text"])
             last_text = len(lines) - 1
     markdown = "\n\n".join(lines)
-    return markdown, figures, _low_confidence(words, paragraphs, page_char, markdown)
+    return markdown, figures, _low_confidence(words, paragraphs, page_char, markdown), head_continues

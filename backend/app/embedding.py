@@ -250,7 +250,8 @@ def build_index(
     pages = _page_texts(root, work_id)
     if not pages:
         raise EmbeddingError("文字起こしされたページがありません。先に文字起こしをしてください。")
-    chunks = chunk_pages(pages)
+    # ページをまたいで切れた段落はつないでから分ける(続きは前のページのまとまりに入る)。
+    chunks = chunk_pages(transcribe.join_pages(root, work_id, pages))
     base_url = ensure_server(server_path, models_dir)
     total = len(chunks)
     vectors: list[bytes] = []

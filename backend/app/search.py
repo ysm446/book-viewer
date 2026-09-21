@@ -34,8 +34,9 @@ def _book_text(root: Path, work_id: str) -> str:
             parts.append(ch["title"])
             if ch.get("summary"):
                 parts.append(ch["summary"])
-        for p in transcribe.done_pages(root, work_id):
-            parts.append(transcribe.plain_for_llm(transcribe.read_text(root, work_id, p) or ""))
+        texts = {p: transcribe.read_text(root, work_id, p) or "" for p in transcribe.done_pages(root, work_id)}
+        for text in transcribe.join_pages(root, work_id, texts).values():
+            parts.append(transcribe.plain_for_llm(text))
     except Exception:  # noqa: BLE001 - 本フォルダでない・読めないときは書名だけで索引する
         pass
     return "\n".join(parts)

@@ -363,7 +363,8 @@ def run(
                     f.unlink(missing_ok=True)
             chapters = detect_chapters(root, work_id, base_url)
         ranges = chapter_ranges(chapters, page_count)
-        texts = _page_texts(root, work_id)
+        # 要約には、ページをまたいで切れた段落をつないだ本文を渡す。
+        texts = transcribe.join_pages(root, work_id, _page_texts(root, work_id))
         index = _load_index(book_dir)
         total = len(ranges) + 1
         done: list[tuple[dict, str]] = []
