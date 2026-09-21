@@ -58,9 +58,9 @@ def enqueue(
     summary_only: bool = False,
     use_story_summary: bool = False,
     story_every: int = 5,
-    use_ocr: bool = True,
     kind: str = "analyze",
     force: bool = False,
+    engine: str = "yomitoku",
 ) -> dict:
     """ジョブを積む。kind="transcribe" は文字起こし(pages 省略時は未処理の全ページ)。"""
     with _cond:
@@ -88,9 +88,9 @@ def enqueue(
                     "summary_only": summary_only,
                     "use_story_summary": use_story_summary,
                     "story_every": story_every,
-                    "use_ocr": use_ocr,
                     "kind": kind,
                     "force": force,
+                    "engine": engine,
                 }
             )
             known.add(wid)
@@ -160,19 +160,22 @@ def _worker() -> None:
         try:
             root = Path(job["root"])
             st = llm_server.status()
-            if not (st["running"] and st["base_url"]):
-                raise RuntimeError("モデルが読み込まれていません。")
+            base_url = st["base_url"] if st["running"] else None
             _title, ap, page_count = _resolve(root, job["work_id"])
             if job.get("kind") == "transcribe":
+                # YomiToku は LLM を使わないので、モデル未読み込みでも動く。
                 transcribe_mod.transcribe_pages(
                     root,
                     job["work_id"],
-                    st["base_url"],
+                    base_url,
                     job.get("pages"),
+                    engine=job.get("engine", "yomitoku"),
                     force=job.get("force", False),
                     cancel_check=lambda: job["work_id"] in _cancel_ids,
                 )
             else:
+                if not base_url:
+                    raise RuntimeError("モデルが読み込まれていません。")
                 # 解析するページを決める(あらすじのみ再生成 / 全ページ / 明示指定 / 未解析から増分)。
                 if job.get("summary_only"):
                     # ページ解析はスキップし、既存キャプションからあらすじ + タグを再生成する。
@@ -190,13 +193,12 @@ def _worker() -> None:
                     root,
                     job["work_id"],
                     ap,
-                    st["base_url"],
+                    base_url,
                     pages,
                     system_prompt=job.get("system_prompt"),
                     context_count=job.get("context_count", 0),
                     use_story_summary=job.get("use_story_summary", False),
                     story_every=job.get("story_every", 5),
-                    use_ocr=job.get("use_ocr", True),
                     # 全ページを先頭から順に解析するときだけ、走行 state(causal)をページ文脈に使える。
                     sequential=job.get("all_pages", False),
                     cancel_check=lambda: job["work_id"] in _cancel_ids,

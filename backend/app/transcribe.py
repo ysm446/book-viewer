@@ -1,8 +1,12 @@
-"""ページ画像の文字起こし(Vision LLM → Markdown)。
+"""ページ画像の文字起こし(→ Markdown)。
 
 1 枚のスクリーンショット(= アーカイブ内の 1 ページ。見開き 2 ページのこともある)ごとに
 本文を Markdown に書き起こし、本フォルダの pages/0001.md … に保存する(本文の正本)。
-図・表の切り抜きは後の段階で行うため、今は図の位置にキャプションだけを残す。
+
+エンジンは 2 つ(比較は scripts/ocr-compare/):
+- yomitoku(既定): 文書 OCR + レイアウト解析(layout_ocr.py)。字の書き換えが少なく速い。
+  図・表は切り抜いて figures/p0001-1.png … に保存し、![キャプション](../figures/…) で参照する。
+- vlm: 読み込み済みの Vision LLM に画像ごと書き起こさせる。図はキャプションだけを残す。
 """
 
 from __future__ import annotations
@@ -15,11 +19,13 @@ from typing import Callable
 
 from PIL import Image
 
-from . import archive, library, llm
+from . import archive, layout_ocr, library, llm
 from .analysis import Cancelled, clear_progress, set_progress
 from .db import connect
 
 PAGES_DIRNAME = "pages"
+FIGURES_DIRNAME = "figures"
+ENGINES = ("yomitoku", "vlm")
 
 # 文字を読むため解析(1024px)より大きく送る。スクリーンショットは長辺 1500px 前後で
 # 本文の字が小さいため、最大 1.5 倍まで拡大してから渡す(誤読が減る)。
@@ -111,6 +117,18 @@ def page_path(book_dir: Path, index: int) -> Path:
     return book_dir / PAGES_DIRNAME / f"{index + 1:04d}.md"
 
 
+_FIGURE_NAME_RE = re.compile(r"^p\d{4}-\d+\.png$")
+
+
+def figure_path(root: Path, work_id: str, name: str) -> Path | None:
+    """figures/ の図のパス。名前は決まった形だけ受け付ける(本フォルダの外へ出させない)。"""
+    if not _FIGURE_NAME_RE.match(name):
+        return None
+    book_dir, _, _ = _book(root, work_id)
+    path = book_dir / FIGURES_DIRNAME / name
+    return path if path.is_file() else None
+
+
 def read_text(root: Path, work_id: str, index: int) -> str | None:
     book_dir, _, _ = _book(root, work_id)
     path = page_path(book_dir, index)
@@ -132,6 +150,25 @@ def done_pages(root: Path, work_id: str) -> list[int]:
     return sorted(out)
 
 
+def _figure_name(index: int, k: int) -> str:
+    return f"p{index + 1:04d}-{k + 1}.png"
+
+
+def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> str:
+    """YomiToku で文字起こしし、図を figures/ に保存した Markdown を返す。"""
+    markdown, figures = layout_ocr.transcribe(raw)
+    fig_dir = book_dir / FIGURES_DIRNAME
+    # やり直しのときに前回の図が残らないよう、このページの図を消してから書く。
+    for old in fig_dir.glob(f"p{index + 1:04d}-*.png"):
+        old.unlink(missing_ok=True)
+    for k, fig in enumerate(figures):
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        name = _figure_name(index, k)
+        (fig_dir / name).write_bytes(fig.png)
+        markdown = markdown.replace(f"(FIGURE:{k})", f"(../{FIGURES_DIRNAME}/{name})")
+    return markdown
+
+
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".md.tmp")
@@ -142,16 +179,22 @@ def _write(path: Path, text: str) -> None:
 def transcribe_pages(
     root: Path,
     work_id: str,
-    base_url: str,
+    base_url: str | None,
     pages: list[int] | None = None,
     *,
+    engine: str = "yomitoku",
     force: bool = False,
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """指定ページ(省略時は未処理の全ページ)を文字起こしして保存し、処理したページ数を返す。
 
     force=False なら既に Markdown があるページは飛ばす。
+    engine="vlm" のときは base_url(読み込み済みの llama-server)が必要。
     """
+    if engine not in ENGINES:
+        raise TranscribeError(f"未対応の文字起こしエンジンです: {engine}")
+    if engine == "vlm" and not base_url:
+        raise TranscribeError("Vision LLM で文字起こしするには、先にモデルを読み込んでください。")
     book_dir, archive_path, row = _book(root, work_id)
     count = row["page_count"]
     targets = list(range(count)) if pages is None else [p for p in pages if 0 <= p < count]
@@ -165,13 +208,17 @@ def transcribe_pages(
             if cancel_check and cancel_check():
                 raise Cancelled()
             raw, _ = archive.read_page(archive_path, idx)
-            out = llm.chat(
-                base_url,
-                [llm.image_message(text_prompt, _data_url(raw))],
-                temperature=0.0,
-                think=False,
-            )
-            _write(page_path(book_dir, idx), clean_output(out))
+            if engine == "yomitoku":
+                text = _transcribe_yomitoku(book_dir, idx, raw)
+            else:
+                out = llm.chat(
+                    base_url,
+                    [llm.image_message(text_prompt, _data_url(raw))],
+                    temperature=0.0,
+                    think=False,
+                )
+                text = clean_output(out)
+            _write(page_path(book_dir, idx), text)
             set_progress(work_id, n + 1, total, "transcribe")
     finally:
         clear_progress(work_id)

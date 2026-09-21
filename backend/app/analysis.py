@@ -14,7 +14,7 @@ from typing import Callable
 
 from PIL import Image
 
-from . import archive, llm, ocr, search
+from . import archive, llm, search
 from .db import connect
 
 
@@ -93,22 +93,6 @@ _PAGE_PROMPT = (
     "これは漫画の1ページです。描かれている場面・登場人物・出来事を日本語で簡潔に説明してください。"
     "セリフが読み取れれば要点も含めてください。3文以内で。"
 )
-
-# OCR 抽出があるページ用。セリフは OCR テキストを正とし、画像からの読み取り直しを
-# 禁止する(Gemma の縦書き誤読が正しい OCR 結果と混ざる「二重読み」の防止)。
-# 画像の役割を絵の解釈に純化する — 文字は専用モデル、解釈は VLM の分業。
-_PAGE_PROMPT_WITH_OCR = (
-    "これは漫画の1ページです。描かれている場面・登場人物・出来事を日本語で簡潔に説明してください。"
-    "セリフは上記の抽出テキストを正とし、画像から文字を読み取り直さないこと。"
-    "画像は場面・人物・表情・動きの解釈に使うこと。セリフの要点も含めて3文以内で。"
-)
-
-
-def _ocr_block(text: str | None) -> str:
-    """OCR で抽出したセリフを、ページ解析プロンプトに添える文脈に整形する。"""
-    if not text:
-        return ""
-    return f"このページから OCR で抽出したセリフ・文字(読み順や話者の対応は不正確なことがある):\n{text}"
 
 
 _SUMMARY_SCHEMA = {
@@ -538,13 +522,10 @@ def analyze_pages(
     use_story_summary: bool = False,
     story_every: int = 5,
     sequential: bool = False,
-    use_ocr: bool = True,
     cancel_check: Callable[[], bool] | None = None,
 ) -> dict:
     """指定ページを解析して page_analysis に保存し、あらすじ + タグを再生成する。
 
-    - use_ocr: mokuro(manga-ocr)でセリフを抽出して text に保存し、キャプション生成の
-      文脈にも添える。OCR 依存が未導入なら黙ってスキップする。
     - context_count>0: 各ページに直前 K ページの説明をテキスト文脈として添える。
     - use_story_summary: 『物語の状態』(あらすじ + 登場人物 + 伏線)を走行更新し、あらすじ生成に使う。
     - sequential: 先頭から末尾へ順に解析する全ページパスか。True のときだけページ解析に
@@ -571,13 +552,6 @@ def analyze_pages(
             if cancel_check and cancel_check():
                 raise Cancelled()
             raw, _ = archive.read_page(archive_path, idx)
-            # OCR は CPU で走るため、GPU の LLM 推論とは競合しない。
-            # 初回はモデルのロード(+ダウンロード)で時間がかかるので phase を分けて見せる。
-            ocr_text: str | None = None
-            if use_ocr:
-                set_progress(work_id, n, total, "ocr")
-                ocr_text = ocr.extract_text(raw)
-                set_progress(work_id, n, total, "caption")
             msgs: list[dict] = []
             if system_prompt:
                 msgs.append({"role": "system", "content": system_prompt})
@@ -587,11 +561,10 @@ def analyze_pages(
             else:
                 # それ以外: 直前 K ページ(causal)を前置き。未来を参照しない。
                 ctx_block = _prev_context_block(root, work_id, idx, causal_k)
-            page_prompt = _PAGE_PROMPT_WITH_OCR if ocr_text else _PAGE_PROMPT
-            text = "\n\n".join(p for p in (ctx_block, _ocr_block(ocr_text), page_prompt) if p)
+            text = "\n\n".join(p for p in (ctx_block, _PAGE_PROMPT) if p)
             msgs.append(llm.image_message(text, _data_url(raw)))
             caption = llm.chat(base_url, msgs, model=model).strip()
-            _save_page(root, work_id, idx, caption, ocr_text, model, context_mode)
+            _save_page(root, work_id, idx, caption, None, model, context_mode)
 
             # M ページごとに物語の状態を走行更新する(画像なしの軽い呼び出し)。
             if use_story_summary:

@@ -18,6 +18,8 @@ export interface AppSettings {
   recentRoots: string[]
   /** 最後に開いていた作品 ID。起動時にその作品を自動で開く(ページ位置は DB 側で復元) */
   lastWorkId: string | null
+  /** 文字起こしのエンジン(yomitoku: 文書 OCR / vlm: 読み込み済みの Vision LLM) */
+  transcribeEngine: 'yomitoku' | 'vlm'
   /** ローカル LLM(OpenAI 互換エンドポイント)の設定 */
   llm: {
     /** 例: http://127.0.0.1:8080/v1 */
@@ -72,6 +74,7 @@ const DEFAULTS: AppSettings = {
   pageTransition: 'slide',
   recentRoots: [],
   lastWorkId: null,
+  transcribeEngine: 'yomitoku',
   llm: {
     baseUrl: 'http://127.0.0.1:8080/v1',
     model: 'local',

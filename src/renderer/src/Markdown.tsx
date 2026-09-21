@@ -8,6 +8,7 @@ import { Fragment, type ReactNode } from 'react'
  * 未完テキスト(閉じていないコードフェンス等)もそのまま途中状態として描画できる。
  * 対応: 見出し / 箇条書き・番号リスト(1段ネスト) / コードブロック / 引用 / 表 /
  * 区切り線 / 太字・斜体・打ち消し・インラインコード・リンク / ルビ(<ruby>漢字<rt>かんじ</rt></ruby>) /
+ * 画像だけの行(![キャプション](パス)。表示するかは resolveImage で決める) /
  * 図の置き場所([図: キャプション] だけの行。本文の文字起こしで使う)。
  */
 
@@ -16,6 +17,8 @@ const INLINE_RE =
 
 /** 本文の文字起こしで図の位置に置く 1 行([図: キャプション])。 */
 const FIGURE_RE = /^\s*\[図[:：]\s*(.*)\]\s*$/
+/** 画像だけの 1 行(![キャプション](パス))。 */
+const IMAGE_RE = /^\s*!\[([^\]\n]*)\]\(([^)\s]+)\)\s*$/
 
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = []
@@ -79,6 +82,7 @@ function splitRow(line: string): string[] {
 function isBlockStart(line: string): boolean {
   return (
     FIGURE_RE.test(line) ||
+    IMAGE_RE.test(line) ||
     /^```/.test(line) ||
     /^#{1,4}\s/.test(line) ||
     LIST_RE.test(line) ||
@@ -90,11 +94,17 @@ function isBlockStart(line: string): boolean {
 
 export function Markdown({
   text,
-  className = 'chat-md'
+  className = 'chat-md',
+  resolveImage
 }: {
   text: string
   /** 外側の class。既定はチャット向けの小さめの組版(chat-md)。 */
   className?: string
+  /**
+   * 画像のパスを表示用 URL に変える。null を返したパス(と、この関数が無いとき)は
+   * 読み込まずにキャプションだけを出す(LLM 出力の外部 URL などを勝手に読みに行かない)。
+   */
+  resolveImage?: (src: string) => string | null
 }): JSX.Element {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   const blocks: ReactNode[] = []
@@ -136,7 +146,27 @@ export function Markdown({
       continue
     }
 
-    // 図の置き場所(図の切り抜きを挿入するまでの仮表示)
+    // 画像(本文中の図)。キャプションは alt に入っている。
+    const image = line.match(IMAGE_RE)
+    if (image) {
+      const url = resolveImage?.(image[2]) ?? null
+      blocks.push(
+        url ? (
+          <figure key={key()} className="md-image">
+            <img src={url} alt={image[1]} loading="lazy" draggable={false} />
+            {image[1] && <figcaption>{inline(image[1])}</figcaption>}
+          </figure>
+        ) : (
+          <div key={key()} className="md-figure">
+            図: {inline(image[1] || image[2])}
+          </div>
+        )
+      )
+      i++
+      continue
+    }
+
+    // 図の置き場所(Vision LLM の文字起こしでは画像を切り抜かず、キャプションだけを残す)
     const fig = line.match(FIGURE_RE)
     if (fig) {
       blocks.push(

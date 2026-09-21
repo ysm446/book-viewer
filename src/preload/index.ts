@@ -17,6 +17,7 @@ export interface AppSettings {
   pageTransition: 'none' | 'slide' | 'fade'
   recentRoots: string[]
   lastWorkId: string | null
+  transcribeEngine: 'yomitoku' | 'vlm'
   llm: {
     baseUrl: string
     model: string

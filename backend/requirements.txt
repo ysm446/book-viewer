@@ -3,3 +3,11 @@ uvicorn[standard]>=0.32,<0.35
 pillow>=11.0,<12.0
 pypdfium2>=4.30,<5
 send2trash>=1.8,<2
+
+# 文字起こし(YomiToku: 日本語の文書 OCR + レイアウト解析)。torch を含むため数 GB 級。
+# モデルは初回使用時に Hugging Face から取得される。モデルのライセンスは CC BY-NC-SA 4.0(非商用)。
+# GPU で動かす場合は、PyPI の torch が CPU ビルドのため CUDA 版を先に入れる
+# (Blackwell 世代は cu128 以降が必要):
+#   ./.venv/Scripts/python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+# CUDA が使えれば GPU、無ければ CPU で自動選択される(app/layout_ocr.py)。
+yomitoku>=0.15,<0.16

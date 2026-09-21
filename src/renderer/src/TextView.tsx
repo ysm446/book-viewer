@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   cancelAnalysis,
   enqueueTranscribe,
+  figureUrl,
   getAnalysisQueue,
   getPageText,
   getTextPages,
+  type TranscribeEngine,
   type Work
 } from './api'
 import { Markdown } from './Markdown'
@@ -16,7 +18,12 @@ interface Props {
   pages: number[]
   /** 縦書きで組むか(本の書字方向) */
   vertical: boolean
+  /** 文字起こしのエンジン(設定) */
+  engine: TranscribeEngine
 }
+
+/** 本文中の図の参照(../figures/p0001-1.png)だけを表示する。それ以外は読み込まない。 */
+const FIGURE_SRC_RE = /^\.\.\/figures\/(p\d{4}-\d+\.png)$/
 
 type Job = { state: 'queued' | 'running'; current: number; total: number } | null
 
@@ -24,7 +31,7 @@ type Job = { state: 'queued' | 'running'; current: number; total: number } | nul
  * リーダーのテキスト表示。本フォルダの pages/*.md を Markdown として描画し、
  * 未処理のページは文字起こしを解析キューへ積める。縦書きの本は縦書きで組む。
  */
-export function TextView({ root, work, pages, vertical }: Props): JSX.Element {
+export function TextView({ root, work, pages, vertical, engine }: Props): JSX.Element {
   const [texts, setTexts] = useState<Record<number, string | null>>({})
   const [done, setDone] = useState<Set<number> | null>(null)
   const [job, setJob] = useState<Job>(null)
@@ -126,7 +133,7 @@ export function TextView({ root, work, pages, vertical }: Props): JSX.Element {
   async function transcribe(target?: number[], force = false): Promise<void> {
     setError(null)
     try {
-      await enqueueTranscribe(root, work.id, { pages: target, force })
+      await enqueueTranscribe(root, work.id, { pages: target, force, engine })
       setJob({ state: 'queued', current: 0, total: 0 })
       watch()
     } catch (e) {
@@ -161,7 +168,11 @@ export function TextView({ root, work, pages, vertical }: Props): JSX.Element {
             <button
               className="btn"
               onClick={() => void transcribe()}
-              title="まだ文字起こししていないページを先頭から順に処理します（モデルの読み込みが必要）"
+              title={
+                engine === 'vlm'
+                  ? 'まだ文字起こししていないページを先頭から順に処理します（Vision LLM の読み込みが必要）'
+                  : 'まだ文字起こししていないページを先頭から順に処理します'
+              }
             >
               残り {remaining} ページを文字起こし
             </button>
@@ -208,7 +219,14 @@ export function TextView({ root, work, pages, vertical }: Props): JSX.Element {
               ) : t.trim() === '' ? (
                 <div className="text-empty">（本文なし）</div>
               ) : (
-                <Markdown text={t} className="book-md" />
+                <Markdown
+                  text={t}
+                  className="book-md"
+                  resolveImage={(src) => {
+                    const m = src.match(FIGURE_SRC_RE)
+                    return m ? figureUrl(root, work.id, m[1]) : null
+                  }}
+                />
               )}
             </section>
           )

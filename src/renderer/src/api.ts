@@ -391,16 +391,29 @@ export async function getPageText(root: string, workId: string, index: number): 
   return data.markdown
 }
 
+/** 文字起こしのエンジン。yomitoku は LLM 不要、vlm は読み込み済みの Vision LLM を使う。 */
+export type TranscribeEngine = 'yomitoku' | 'vlm'
+
 /** 文字起こしをキューに積む(pages 省略時は未処理の全ページ、force で作り直し)。 */
 export async function enqueueTranscribe(
   root: string,
   workId: string,
-  opts?: { pages?: number[]; force?: boolean }
+  opts?: { pages?: number[]; force?: boolean; engine?: TranscribeEngine }
 ): Promise<AnalysisQueue> {
   return jsonFetch(`/works/${workId}/transcribe`, {
     method: 'POST',
-    body: JSON.stringify({ root, pages: opts?.pages ?? null, force: opts?.force ?? false })
+    body: JSON.stringify({
+      root,
+      pages: opts?.pages ?? null,
+      force: opts?.force ?? false,
+      engine: opts?.engine ?? 'yomitoku'
+    })
   })
+}
+
+/** 本文中の図(本フォルダ figures/ の切り抜き画像)の URL。 */
+export function figureUrl(root: string, workId: string, name: string): string {
+  return api(`/works/${workId}/figures/${encodeURIComponent(name)}?root=${encodeURIComponent(root)}`)
 }
 
 export interface ChatTurn {

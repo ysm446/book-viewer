@@ -828,6 +828,7 @@ export function Reader({
             work={work}
             pages={textPages}
             vertical={writingMode === 'vertical'}
+            engine={settings.transcribeEngine ?? 'yomitoku'}
           />
         ) : (
         <>

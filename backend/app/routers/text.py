@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .. import analysis_queue, transcribe
@@ -31,12 +32,34 @@ class TranscribeRequest(BaseModel):
     root: str
     pages: list[int] | None = None  # 省略時は未処理の全ページ
     force: bool = False  # 既存の Markdown も作り直す
+    engine: str = "yomitoku"  # 'yomitoku' / 'vlm'
 
 
 @router.post("/{work_id}/transcribe")
 def enqueue_transcribe(work_id: str, body: TranscribeRequest) -> dict:
     """文字起こしを解析キューに積む。"""
     get_root(body.root)
+    if body.engine not in transcribe.ENGINES:
+        raise HTTPException(status_code=400, detail="engine は yomitoku / vlm のいずれか")
     return analysis_queue.enqueue(
-        body.root, [work_id], 0, pages=body.pages, kind="transcribe", force=body.force
+        body.root,
+        [work_id],
+        0,
+        pages=body.pages,
+        kind="transcribe",
+        force=body.force,
+        engine=body.engine,
     )
+
+
+@router.get("/{work_id}/figures/{name}")
+def figure(work_id: str, name: str, root: str) -> FileResponse:
+    """本文中の図(本フォルダの figures/ にある切り抜き画像)を返す。"""
+    r = get_root(root)
+    try:
+        path = transcribe.figure_path(r, work_id, name)
+    except transcribe.TranscribeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if path is None:
+        raise HTTPException(status_code=404, detail="図が見つかりません")
+    return FileResponse(path, media_type="image/png")

@@ -46,7 +46,6 @@ class EnqueueRequest(BaseModel):
     summary_only: bool = False
     use_story_summary: bool = False
     story_every: int = 5
-    use_ocr: bool = True
 
 
 @router.post("/analysis/enqueue")
@@ -65,7 +64,6 @@ def analysis_enqueue(body: EnqueueRequest) -> dict:
         body.summary_only,
         body.use_story_summary,
         body.story_every,
-        body.use_ocr,
     )
 
 

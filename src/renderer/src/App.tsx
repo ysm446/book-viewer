@@ -307,7 +307,7 @@ export function App(): JSX.Element {
     setMenuFor(null)
     if (!root) return
     try {
-      setQueue(await enqueueTranscribe(root, w.id))
+      setQueue(await enqueueTranscribe(root, w.id, { engine: settings?.transcribeEngine }))
     } catch (e) {
       notify(`文字起こしを開始できませんでした: ${(e as Error).message}`, null, true)
     }
@@ -1131,8 +1131,12 @@ export function App(): JSX.Element {
                       <button
                         className="ex-popup-item"
                         role="menuitem"
-                        disabled={!llmStatus.running}
-                        title={llmStatus.running ? undefined : 'モデル未読込のため実行できません'}
+                        disabled={settings?.transcribeEngine === 'vlm' && !llmStatus.running}
+                        title={
+                          settings?.transcribeEngine === 'vlm' && !llmStatus.running
+                            ? 'Vision LLM で文字起こしする設定です。モデルを読み込んでください'
+                            : undefined
+                        }
                         onClick={() => void transcribeWork(w)}
                       >
                         文字起こしする（未処理のページ）

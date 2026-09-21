@@ -1312,7 +1312,28 @@ input[type='checkbox']:focus-visible {
 .book-md a {
   color: var(--accent);
 }
-/* 図の置き場所(切り抜き画像を入れるまでの仮表示) */
+/* 本文中の図(本フォルダ figures/ の切り抜き画像) */
+.md-image {
+  margin: 0 0 1em;
+  text-align: center;
+}
+.md-image img {
+  max-inline-size: 100%;
+  max-block-size: 70vh;
+  border-radius: 4px;
+}
+/* 縦書きでも図とキャプションは横書きで見せる */
+.text-scroll.is-vertical .md-image {
+  writing-mode: horizontal-tb;
+  max-width: 60vh;
+}
+.md-image figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
+}
+/* 図の置き場所(Vision LLM の文字起こしなど、画像が無いときの仮表示) */
 .md-figure {
   margin: 0 0 1em;
   padding: 8px 12px;
@@ -1641,7 +1662,6 @@ input[type='checkbox']:focus-visible {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
   transform: translate(-50%, -50%);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   pointer-events: none;
@@ -2427,7 +2447,6 @@ input[type='checkbox']:focus-visible {
 }
 .switch input:checked + .switch-track::before {
   transform: translateX(16px);
-  background: #fff;
 }
 .switch input:disabled + .switch-track {
   opacity: 0.4;

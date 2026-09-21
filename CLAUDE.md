@@ -68,9 +68,6 @@ data/            実行時生成物（git 管理外）
 npm install
 cd backend && py -3 -m venv .venv && ./.venv/Scripts/python.exe -m pip install -r requirements.txt
 
-# 任意: ページ OCR(セリフ抽出)。torch を含み数百MB。未導入でも他機能は動く
-cd backend && ./.venv/Scripts/python.exe -m pip install -r requirements-ocr.txt
-
 # 起動（Electron が venv の Python backend を自動起動する）
 npm run dev
 

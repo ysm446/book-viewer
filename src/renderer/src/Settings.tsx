@@ -507,6 +507,35 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
             {tab === 'ai' && (
               <>
           <section className="settings-section">
+            <h3 className="settings-section-title">文字起こし</h3>
+            <div className="settings-row">
+              <div className="settings-label">
+                エンジン
+                <span className="settings-desc">
+                  YomiToku（既定）は日本語の文書 OCR。字の読み違いが少なく速く、図も切り抜きます。
+                  Vision LLM は読み込み済みのモデルに書き起こさせます（遅く、言い換えが混ざることがあります）
+                </span>
+              </div>
+              <div className="seg" role="group" aria-label="文字起こしのエンジン">
+                {(
+                  [
+                    ['yomitoku', 'YomiToku'],
+                    ['vlm', 'Vision LLM']
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    className={`seg-btn ${(settings.transcribeEngine ?? 'yomitoku') === id ? 'seg-active' : ''}`}
+                    onClick={() => onChange({ transcribeEngine: id })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="settings-section">
             <h3 className="settings-section-title">AI 解析（ローカル LLM）</h3>
 
             <div className="settings-row">
