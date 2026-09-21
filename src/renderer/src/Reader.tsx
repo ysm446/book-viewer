@@ -18,7 +18,7 @@ import {
 } from './api'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
-import { TextView } from './TextView'
+import { TextView, type TextViewHandle } from './TextView'
 import { TocPanel } from './TocPanel'
 import type { AppSettings } from '../../preload'
 
@@ -35,6 +35,22 @@ function chatContextChars(ctxSize: number): number {
 
 /** 画像(スクリーンショット)で読むか、文字起こしした本文で読むか。 */
 type ViewMode = 'image' | 'text'
+
+/** テキスト表示の本文の組み方。book は原本の書字方向どおり。 */
+type TextLayout = 'book' | 'horizontal' | 'vertical'
+const TEXT_LAYOUTS: { value: TextLayout; label: string }[] = [
+  { value: 'book', label: '原本どおり' },
+  { value: 'horizontal', label: '横書き' },
+  { value: 'vertical', label: '縦書き' }
+]
+
+/** テキスト表示の本文の文字サイズ(px)。 */
+const TEXT_SIZES: { value: number; label: string }[] = [
+  { value: 14, label: '小' },
+  { value: 16, label: '中' },
+  { value: 18, label: '大' },
+  { value: 20, label: '特大' }
+]
 
 interface ReaderProps {
   root: string
@@ -185,6 +201,25 @@ export function Reader({
     localStorage.setItem('readerViewMode', viewMode)
   }, [viewMode])
   const [writingMode, setWritingMode] = useState<WritingMode>(work.writing_mode ?? 'horizontal')
+  // 本文の組み方と文字サイズも本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
+  const [textLayout, setTextLayout] = useState<TextLayout>(() => {
+    const v = localStorage.getItem('readerTextLayout')
+    return v === 'horizontal' || v === 'vertical' ? v : 'book'
+  })
+  useEffect(() => {
+    localStorage.setItem('readerTextLayout', textLayout)
+  }, [textLayout])
+  const [textSize, setTextSize] = useState<number>(() => {
+    const v = Number(localStorage.getItem('readerTextSize'))
+    return TEXT_SIZES.some((s) => s.value === v) ? v : 16
+  })
+  useEffect(() => {
+    localStorage.setItem('readerTextSize', String(textSize))
+  }, [textSize])
+  const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
+  const textRef = useRef<TextViewHandle | null>(null)
+  // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
+  const [textCompleted, setTextCompleted] = useState(false)
   const [tags, setTags] = useState<string[]>(work.tags ?? [])
   const [showTags, setShowTags] = useState(false)
   // 表示設定バー(読み方向・見開きずらし)の開閉。
@@ -207,7 +242,8 @@ export function Reader({
     // p は見開きの先頭ページ。読了判定は見開き末尾のページで行う
     // (最終見開きが2枚組だと先頭ページでは最終ページに届かない)。
     const spread = spreads.find((s) => s.includes(p))
-    const completed = (spread ? spread[spread.length - 1] : p) >= count - 1
+    const completed =
+      (spread ? spread[spread.length - 1] : p) >= count - 1 || (viewMode === 'text' && textCompleted)
     saveReadingState(root, work.id, p, completed).catch(() => {})
     onProgress?.(work.id, p, completed)
   }
@@ -216,9 +252,12 @@ export function Reader({
     [spreads, page]
   )
   const currentSpread = spreads[curIdx] ?? [page]
-  // テキスト表示ではページ番号順に並べる(rtl でも本文は先頭ページから)。
-  const textPagesKey = [...currentSpread].sort((a, b) => a - b).join(',')
-  const textPages = useMemo(() => textPagesKey.split(',').map(Number), [textPagesKey])
+  // テキスト表示は原本の見開きに縛られないので、今の原本ページだけを「表示中」とみなす
+  // (しおり・目次・チャットのネタバレ防止に使う)。
+  const viewPages = useMemo(
+    () => (viewMode === 'text' ? [page] : currentSpread),
+    [viewMode, page, currentSpread]
+  )
 
   // 直近のページ送り方向(スライドの向きに使う)。
   const turnRef = useRef<'next' | 'prev'>('next')
@@ -292,12 +331,12 @@ export function Reader({
   }, [root, work.id])
 
   // 表示中の見開きに含まれるページのしおり。
-  const spreadBookmark = bookmarks.find((b) => currentSpread.includes(b.page))
+  const spreadBookmark = bookmarks.find((b) => viewPages.includes(b.page))
 
   // 現在ページのしおりを付け外しする。
   const toggleBookmark = useCallback(() => {
-    const target = currentSpread[0]
-    const existing = bookmarks.find((b) => currentSpread.includes(b.page))
+    const target = viewPages[0]
+    const existing = bookmarks.find((b) => viewPages.includes(b.page))
     if (existing) {
       setBookmarks((bs) => bs.filter((b) => b.id !== existing.id))
       deleteBookmark(root, work.id, existing.id).catch(() => {})
@@ -312,7 +351,13 @@ export function Reader({
         )
         .catch(() => {})
     }
-  }, [bookmarks, currentSpread, root, work.id])
+  }, [bookmarks, viewPages, root, work.id])
+
+  // テキスト表示から: 画面の本文が原本のどのページまで進んだか。
+  const onTextPageChange = useCallback((p: number, completed: boolean): void => {
+    setPage(p)
+    setTextCompleted(completed)
+  }, [])
 
   function jumpTo(p: number): void {
     setPage(Math.min(Math.max(p, 0), count - 1))
@@ -358,18 +403,22 @@ export function Reader({
       if (document.querySelector('[aria-modal="true"]')) return
       // Ctrl+S / Ctrl+B などの修飾キー付きはブラウザや OS の操作なので拾わない。
       if (e.ctrlKey || e.metaKey || e.altKey) return
+      // テキスト表示はアプリが組んだ画面を送る。進む向きは本文の組み方で決まる(縦書きは左へ)。
+      const text = viewMode === 'text'
+      const back = text ? () => textRef.current?.turn('prev') : prev
+      const forward = text ? () => textRef.current?.turn('next') : next
+      const leftIsNext = text ? textVertical : rtl
       if (e.key === 'Escape') onClose?.()
-      else if (e.key === 'ArrowRight') rtl ? prev() : next()
-      else if (e.key === 'ArrowLeft') rtl ? next() : prev()
-      // テキスト表示では上下キーを本文のスクロールに譲る。
-      else if (e.key === 'ArrowUp' && viewMode === 'image') prev()
-      else if (e.key === 'ArrowDown' && viewMode === 'image') next()
+      else if (e.key === 'ArrowRight') leftIsNext ? back() : forward()
+      else if (e.key === 'ArrowLeft') leftIsNext ? forward() : back()
+      else if (e.key === 'ArrowUp') back()
+      else if (e.key === 'ArrowDown') forward()
       else if ((e.key === 's' || e.key === 'S') && settings.pageMode === 'double') toggleOffset()
       else if (e.key === 'b' || e.key === 'B') toggleBookmark()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rtl, prev, next, onClose, toggleOffset, toggleBookmark, settings.pageMode, viewMode])
+  }, [rtl, prev, next, onClose, toggleOffset, toggleBookmark, settings.pageMode, viewMode, textVertical])
 
   // F9: 表示中のページ画像を、アーカイブ内の元データのまま保存する(見開きなら 2 枚)。
   // backend から取得したバイト列をそのまま main へ渡すので、再エンコードによる劣化はない。
@@ -482,10 +531,8 @@ export function Reader({
         >
           チャット
         </button>
-        <span className="reader-count">
-          {currentSpread.length === 2
-            ? `${currentSpread[0] + 1}-${lastPageOfSpread + 1}`
-            : currentSpread[0] + 1}{' '}
+        <span className="reader-count" title={viewMode === 'text' ? '原本のページ' : undefined}>
+          {viewPages.length === 2 ? `${viewPages[0] + 1}-${lastPageOfSpread + 1}` : viewPages[0] + 1}{' '}
           / {count}
         </span>
       </header>
@@ -511,21 +558,54 @@ export function Reader({
             </select>
           </div>
           <div className="display-item">
-            <span className="display-label">書字方向</span>
-            <div className="seg" role="group" aria-label="書字方向">
+            <span className="display-label">原本の書字方向</span>
+            <div className="seg" role="group" aria-label="原本の書字方向">
               {(['horizontal', 'vertical'] as const).map((m) => (
                 <button
                   key={m}
                   className={`seg-btn ${writingMode === m ? 'seg-active' : ''}`}
                   onClick={() => changeWritingMode(m)}
-                  title="本文の書字方向。テキスト表示の組み方と、文字起こしの読み順に使います"
+                  title="原本の書字方向。文字起こしの読み順と、本文の組み方「原本どおり」に使います"
                 >
                   {m === 'horizontal' ? '横書き' : '縦書き'}
                 </button>
               ))}
             </div>
           </div>
-          {settings.pageMode === 'double' && (
+          {viewMode === 'text' && (
+            <>
+              <div className="display-item">
+                <span className="display-label">本文の組み方</span>
+                <div className="seg" role="group" aria-label="本文の組み方">
+                  {TEXT_LAYOUTS.map((l) => (
+                    <button
+                      key={l.value}
+                      className={`seg-btn ${textLayout === l.value ? 'seg-active' : ''}`}
+                      onClick={() => setTextLayout(l.value)}
+                      title="テキスト表示の本文を横書き / 縦書きのどちらで組むか（原本の書字方向とは別に選べます）"
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="display-item">
+                <span className="display-label">文字サイズ</span>
+                <div className="seg" role="group" aria-label="文字サイズ">
+                  {TEXT_SIZES.map((t) => (
+                    <button
+                      key={t.value}
+                      className={`seg-btn ${textSize === t.value ? 'seg-active' : ''}`}
+                      onClick={() => setTextSize(t.value)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+          {settings.pageMode === 'double' && viewMode === 'image' && (
             <div className="display-item">
               <span className="display-label">見開きのペア</span>
               <button
@@ -577,7 +657,7 @@ export function Reader({
         <TocPanel
           root={root}
           work={work}
-          currentPage={currentSpread[0]}
+          currentPage={viewPages[0]}
           llmReady={llmReady}
           onJump={jumpTo}
         />
@@ -593,10 +673,15 @@ export function Reader({
       >
         {viewMode === 'text' ? (
           <TextView
+            ref={textRef}
             root={root}
             work={work}
-            pages={textPages}
-            vertical={writingMode === 'vertical'}
+            page={page}
+            onPageChange={onTextPageChange}
+            vertical={textVertical}
+            columns={settings.pageMode === 'double' ? 2 : 1}
+            fontSize={textSize}
+            animate={animate}
             engine={settings.transcribeEngine ?? 'yomitoku'}
           />
         ) : (
@@ -661,7 +746,7 @@ export function Reader({
             bookmarks.map((b) => (
               <div
                 key={b.id}
-                className={`reader-bm-item ${currentSpread.includes(b.page) ? 'is-current' : ''}`}
+                className={`reader-bm-item ${viewPages.includes(b.page) ? 'is-current' : ''}`}
               >
                 <button
                   className="reader-bm-thumb"
@@ -699,7 +784,7 @@ export function Reader({
           <ReaderChat
             root={root}
             work={work}
-            currentPage={currentSpread[currentSpread.length - 1]}
+            currentPage={viewPages[viewPages.length - 1]}
             contextChars={chatContextChars(settings.llm.ctxSize)}
             serverPath={settings.llm.serverPath}
             modelsDir={settings.llm.modelsDir}

@@ -227,7 +227,7 @@ def done_pages(root: Path, work_id: str) -> list[int]:
     return sorted(out)
 
 
-# ---- ページをまたぐ段落のつなぎ ----
+# ---- ページをまたぐ段落のつなぎ(つなぐ処理は content.py) ----
 
 _BLOCK_RE = re.compile(r"\n\s*\n")
 # 本文の段落ではないブロック(見出し・図・表・リスト・引用・コード・数式)。
@@ -271,32 +271,6 @@ def joins_previous(prev_markdown: str, markdown: str, head_continues: bool | Non
     if len(tail) >= _SHORT_TAIL and "、" not in tail and "。" not in tail:
         return False
     return _ends_mid_sentence(last)
-
-
-def join_pages(root: Path, work_id: str, texts: dict[int, str]) -> dict[int, str]:
-    """ページごとの本文(Markdown)の、ページをまたいで切れた段落をつないだものを返す。
-
-    続きの部分(次のページの最初の段落)は前のページの最後の段落に寄せる。つなぐのは
-    texts に前後のページが両方あるときだけ(渡していない先のページの文は持ち込まない)。
-    ページのファイル(本文の正本)は変えない。LLM・索引・検索に渡す本文に使う。
-    """
-    book_dir, _, _ = _book(root, work_id)
-    out = dict(texts)
-    for p in sorted(texts):
-        if p - 1 not in out:
-            continue
-        head = _read_meta(book_dir, p).get("head_continues")
-        if not joins_previous(out[p - 1], out[p], head):
-            continue
-        prev_blocks = _BLOCK_RE.split(out[p - 1].rstrip())
-        first, *rest = _BLOCK_RE.split(out[p].strip(), maxsplit=1)
-        tail = prev_blocks[-1].rstrip()
-        # 英単語どうしが切れていたら空白を入れる(日本語は詰める)。
-        sep = " " if tail[-1:].isascii() and tail[-1:].isalnum() and first[:1].isascii() and first[:1].isalnum() else ""
-        prev_blocks[-1] = tail + sep + first.strip()
-        out[p - 1] = "\n\n".join(prev_blocks)
-        out[p] = rest[0] if rest else ""
-    return out
 
 
 def _figure_name(index: int, k: int) -> str:

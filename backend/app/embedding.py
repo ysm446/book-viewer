@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import llm, llm_server, transcribe
+from . import content, llm, llm_server, transcribe
 from .progress import Cancelled, clear_progress, set_progress
 from .db import connect
 
@@ -241,12 +241,6 @@ def _signature(pages: dict[int, str]) -> str:
     return h.hexdigest()
 
 
-def _lost_head(original: str, joined: str) -> bool:
-    """ページの最初の段落が前のページに寄せられた(つながれた)か。"""
-    first = re.split(r"\n\s*\n", original.strip(), maxsplit=1)[0].strip()
-    return bool(first) and not joined.strip().startswith(first)
-
-
 def _page_texts(root: Path, work_id: str) -> dict[int, str]:
     return {p: transcribe.read_text(root, work_id, p) or "" for p in transcribe.done_pages(root, work_id)}
 
@@ -283,16 +277,16 @@ def build_index(
     pages = _page_texts(root, work_id)
     if not pages:
         raise EmbeddingError("文字起こしされたページがありません。先に文字起こしをしてください。")
-    # ページをまたいで切れた段落はつないでから分ける(続きは前のページのまとまりに入る)。
-    joined = transcribe.join_pages(root, work_id, pages)
-    chunks = chunk_pages(joined)
-    # 次のページの書き出しを取り込んだまとまりは page_end = 次のページ。検索で「今のページまで」に
+    # アプリ用の本文を分ける(ページをまたいで切れた段落はつないであり、続きは始まりのページの
+    # まとまりに入る)。
+    chunks = chunk_pages(content.page_texts(root, work_id))
+    # 先のページの書き出しを取り込んだまとまりは page_end = その続きのページ。検索で「今のページまで」に
     # 絞るときにそのまとまりを外し、先の内容が混ざらないようにする。
-    absorbed = {p for p in pages if p + 1 in pages and _lost_head(pages[p + 1], joined[p + 1])}
+    continued = content.continued_pages(root, work_id)
     page_end: list[int | None] = []
     for n, (page, _) in enumerate(chunks):
         last_of_page = n + 1 == len(chunks) or chunks[n + 1][0] != page
-        page_end.append(page + 1 if last_of_page and page in absorbed else None)
+        page_end.append(continued.get(page) if last_of_page else None)
     base_url = ensure_server(server_path, models_dir)
     total = len(chunks)
     vectors: list[bytes] = []

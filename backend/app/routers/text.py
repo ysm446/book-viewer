@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import jobs, transcribe
+from .. import content, jobs, transcribe
 from ..resolve import get_root
 
 router = APIRouter(prefix="/works")
@@ -27,6 +27,17 @@ def page_text(work_id: str, index: int, root: str) -> dict:
     except transcribe.TranscribeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return page or {"markdown": None, "low": [], "edited": False}
+
+
+@router.get("/{work_id}/content")
+def book_content(work_id: str, root: str) -> dict:
+    """アプリ用の本文(原本のページ割りから切り離したブロックの並び)。テキスト表示が組み直して使う。"""
+    r = get_root(root)
+    try:
+        data = content.load(r, work_id)
+    except transcribe.TranscribeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"signature": data["signature"], "pages_done": data["pages_done"], "blocks": data["blocks"]}
 
 
 class TextUpdate(BaseModel):

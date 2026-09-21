@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import archive, embedding, llm, structure, transcribe
+from . import archive, content, embedding, llm, structure, transcribe
 from .db import connect
 
 # 画像を添えるときに縮小する長辺(コスト削減)。
@@ -53,17 +53,13 @@ def _reading_context(
     本文が無ければ ([], None, None)。先のページは渡さない(ネタバレ防止)。
     """
     try:
-        done = transcribe.done_pages(root, work_id)
+        # アプリ用の本文(ページをまたいで切れた段落はつないである)。先のページの文は持ち込まない。
+        texts = content.page_texts(root, work_id, max_page=current_page)
     except transcribe.TranscribeError:
         return [], None, None
-    pages = [p for p in done if current_page is None or p <= current_page]
-    # ページをまたいで切れた段落はつなぐ(先のページは渡していないので持ち込まない)。
-    texts = transcribe.join_pages(
-        root, work_id, {p: transcribe.read_text(root, work_id, p) or "" for p in pages}
-    )
     picked: list[tuple[int, str]] = []
     used = 0
-    for p in reversed(pages):
+    for p in sorted(texts, reverse=True):
         text = transcribe.plain_for_llm(texts[p])
         if not text:
             continue

@@ -23,7 +23,7 @@ def _fts_available(conn: sqlite3.Connection) -> bool:
 
 def _book_text(root: Path, work_id: str) -> str:
     """索引に入れる本文と要約(本フォルダ方式でなければ空)。"""
-    from . import structure, transcribe  # transcribe → progress → … の循環を避けてここで読む
+    from . import content, structure, transcribe  # transcribe → progress → … の循環を避けてここで読む
 
     parts: list[str] = []
     try:
@@ -34,8 +34,8 @@ def _book_text(root: Path, work_id: str) -> str:
             parts.append(ch["title"])
             if ch.get("summary"):
                 parts.append(ch["summary"])
-        texts = {p: transcribe.read_text(root, work_id, p) or "" for p in transcribe.done_pages(root, work_id)}
-        for text in transcribe.join_pages(root, work_id, texts).values():
+        # 本文はアプリ用の本文(ページをまたいで切れた段落をつないだもの)から取る。
+        for text in content.page_texts(root, work_id).values():
             parts.append(transcribe.plain_for_llm(text))
     except Exception:  # noqa: BLE001 - 本フォルダでない・読めないときは書名だけで索引する
         pass

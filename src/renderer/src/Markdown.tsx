@@ -95,7 +95,8 @@ function isBlockStart(line: string): boolean {
 export function Markdown({
   text,
   className = 'chat-md',
-  resolveImage
+  resolveImage,
+  eagerImages = false
 }: {
   text: string
   /** 外側の class。既定はチャット向けの小さめの組版(chat-md)。 */
@@ -105,6 +106,8 @@ export function Markdown({
    * 読み込まずにキャプションだけを出す(LLM 出力の外部 URL などを勝手に読みに行かない)。
    */
   resolveImage?: (src: string) => string | null
+  /** 画像を遅延させずに読み込む(画像の大きさで組みが変わるページ組みの表示用)。 */
+  eagerImages?: boolean
 }): JSX.Element {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   const blocks: ReactNode[] = []
@@ -153,7 +156,7 @@ export function Markdown({
       blocks.push(
         url ? (
           <figure key={key()} className="md-image">
-            <img src={url} alt={image[1]} loading="lazy" draggable={false} />
+            <img src={url} alt={image[1]} loading={eagerImages ? 'eager' : 'lazy'} draggable={false} />
             {image[1] && <figcaption>{inline(image[1])}</figcaption>}
           </figure>
         ) : (

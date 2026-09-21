@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import library, llm, transcribe
+from . import content, library, llm, transcribe
 from .progress import Cancelled, clear_progress, set_progress
 
 SUMMARIES_DIRNAME = "summaries"
@@ -366,8 +366,8 @@ def run(
                 for f in (book_dir / SUMMARIES_DIRNAME).glob("*"):
                     f.unlink(missing_ok=True)
         ranges = chapter_ranges(chapters, page_count)
-        # 要約には、ページをまたいで切れた段落をつないだ本文を渡す。
-        texts = transcribe.join_pages(root, work_id, _page_texts(root, work_id))
+        # 要約には、アプリ用の本文(ページをまたいで切れた段落をつないだもの)を渡す。
+        texts = content.page_texts(root, work_id)
         index = _load_index(book_dir)
         total = len(ranges) + 1
         done: list[tuple[dict, str]] = []

@@ -1219,38 +1219,50 @@ input[type='checkbox']:focus-visible {
   font-size: 12px;
   color: var(--danger);
 }
-.text-scroll {
+/* 本文のページ組み(リフロー)。1 段(横書きは 1〜2 段)を 1 画面として、段の並ぶ方向へずらして見せる。
+   大きさ・段の数・ずらす量は TextView が計算して style で渡す。スクロールはさせない。 */
+.rf-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 24px 24px 80px;
-  user-select: text;
-}
-/* 縦書き: 行は上→下、ページは右→左へ進む。横スクロールになる。 */
-.text-scroll.is-vertical {
-  writing-mode: vertical-rl;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 24px 24px 24px 80px;
-}
-.text-page {
-  max-inline-size: 42em;
-  margin-inline: auto;
-  margin-block-end: 24px;
-}
-.text-page + .text-page {
-  padding-block-start: 24px;
-  border-block-start: 1px solid var(--border);
-}
-.text-page-no {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-block-end: 8px;
+  justify-content: center;
+  overflow: hidden;
+  user-select: text;
+}
+.rf-viewport {
+  flex: 0 0 auto;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.rf-flow {
+  column-fill: auto;
+}
+/* 縦書き: 行は上→下、右→左へ進む。段は下へ並ぶ。 */
+.rf-flow.is-vertical {
+  writing-mode: vertical-rl;
+}
+/* 見出しの直後・図の途中では画面を分けない。 */
+.rf-heading {
+  break-after: avoid;
+}
+.rf-figure,
+.rf-table,
+.rf-code {
+  break-inside: avoid;
+}
+.rf-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  text-align: center;
   font-size: 11px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   user-select: none;
+  pointer-events: none;
 }
 .text-page-badge {
   padding: 0 6px;
@@ -1259,25 +1271,6 @@ input[type='checkbox']:focus-visible {
   font-size: 11px;
   color: var(--text-sub);
 }
-.text-page-edit {
-  height: 24px;
-  padding: 0 8px;
-  background: transparent;
-  color: var(--text-sub);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.text-page-edit:hover:not(:disabled) {
-  background: var(--panel-2);
-  color: var(--text);
-}
-.text-page-edit:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 /* 本文の編集: 左に原本、右に Markdown の編集欄 */
 .text-edit {
   flex: 1;
@@ -1366,7 +1359,8 @@ input[type='checkbox']:focus-visible {
   color: var(--text-sub);
 }
 
-/* 本文の組版。読ませる文章なので UI(13px)より大きく、行間を広く取る。 */
+/* 本文の組版。読ませる文章なので UI(13px)より大きく、行間を広く取る。
+   文字サイズは表示設定で変えられるので、中の大きさは em で持つ(16px のとき 20 / 18 / 14 / 10px)。 */
 .book-md {
   font-size: 16px;
   line-height: 1.9;
@@ -1384,14 +1378,14 @@ input[type='checkbox']:focus-visible {
   font-weight: 600;
 }
 .book-md h1 {
-  font-size: 20px;
+  font-size: 1.25em;
 }
 .book-md h2 {
-  font-size: 18px;
+  font-size: 1.125em;
 }
 .book-md h3,
 .book-md h4 {
-  font-size: 16px;
+  font-size: 1em;
 }
 .book-md > :first-child {
   margin-block-start: 0;
@@ -1403,7 +1397,7 @@ input[type='checkbox']:focus-visible {
 }
 .book-md code {
   font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-  font-size: 14px;
+  font-size: 0.875em;
   padding: 1px 4px;
   border-radius: 4px;
   background: var(--panel-2);
@@ -1430,7 +1424,7 @@ input[type='checkbox']:focus-visible {
 .book-md table {
   margin: 0 0 1em;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 0.875em;
   line-height: 1.5;
 }
 .book-md th,
@@ -1442,7 +1436,7 @@ input[type='checkbox']:focus-visible {
   background: var(--panel-2);
 }
 .book-md rt {
-  font-size: 10px;
+  font-size: 0.625em;
   color: var(--text-sub);
 }
 .book-md a {
@@ -1458,10 +1452,18 @@ input[type='checkbox']:focus-visible {
   max-block-size: 70vh;
   border-radius: 4px;
 }
+/* ページ組みの中の図は、キャプションごと 1 画面(1 段)に収める。 */
+.rf-flow .md-image img {
+  max-width: 100%;
+  max-height: calc(var(--rf-h) - 6em);
+}
 /* 縦書きでも図とキャプションは横書きで見せる */
-.text-scroll.is-vertical .md-image {
+.rf-flow.is-vertical .md-image {
   writing-mode: horizontal-tb;
-  max-width: 60vh;
+  max-width: min(var(--rf-w), 60vh);
+}
+.rf-flow.is-vertical .md-image img {
+  max-height: calc(var(--rf-h) - 8em);
 }
 .md-image figcaption {
   margin-top: 6px;

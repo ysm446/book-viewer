@@ -307,12 +307,26 @@ export async function getQueue(): Promise<JobQueue> {
   return jsonFetch(`/queue`)
 }
 
-/** 文字起こし済みのページ番号(0 始まり)。 */
-export async function getTextPages(root: string, workId: string): Promise<number[]> {
-  const data = await jsonFetch<{ pages: number[] }>(
-    `/works/${workId}/text?root=${encodeURIComponent(root)}`
-  )
-  return data.pages
+/** アプリ用の本文のブロック(段落・見出し・図など)。 */
+export interface ContentBlock {
+  /** 原本の何ページから始まるか(0 始まり) */
+  page: number
+  kind: 'p' | 'heading' | 'figure' | 'table' | 'list' | 'quote' | 'code' | 'math'
+  md: string
+  /** 章の始まり(表示で改ページする) */
+  break?: boolean
+}
+
+/** アプリ用の本文(原本のページ割りから切り離した、ひと続きの本文)。 */
+export interface BookContent {
+  /** 材料(ページの本文・章立て)の指紋。変わっていなければ組み直さなくてよい。 */
+  signature: string
+  pages_done: number
+  blocks: ContentBlock[]
+}
+
+export async function getContent(root: string, workId: string): Promise<BookContent> {
+  return jsonFetch(`/works/${workId}/content?root=${encodeURIComponent(root)}`)
 }
 
 /** 読み取りの確信度が低い本文の行(要確認の候補)。 */
