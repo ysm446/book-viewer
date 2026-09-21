@@ -79,6 +79,11 @@ _TAG_RE = re.compile(r"</?ruby>")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
 
 
+def strip_ruby(markdown: str) -> str:
+    """ルビ(<ruby>漢字<rt>かんじ</rt></ruby>)を親文字だけにする。"""
+    return _TAG_RE.sub("", _RT_RE.sub("", markdown))
+
+
 def plain_for_llm(markdown: str) -> str:
     """本文の Markdown を LLM に渡す形にする。
 
@@ -86,9 +91,8 @@ def plain_for_llm(markdown: str) -> str:
     (system 側の「## 本文」などの区切りと紛れないように)。
     """
     text = _IMAGE_REF_RE.sub(lambda m: f"[図: {m.group(1)}]" if m.group(1) else "[図]", markdown)
-    text = _RT_RE.sub("", text)
-    text = _HEADING_RE.sub(lambda m: f"【{m.group(1).strip()}】", text)
-    return _TAG_RE.sub("", text).strip()
+    text = _HEADING_RE.sub(lambda m: f"【{m.group(1).strip()}】", strip_ruby(text))
+    return text.strip()
 
 
 def prompt(writing_mode: str) -> str:
@@ -263,7 +267,7 @@ def joins_previous(prev_markdown: str, markdown: str, head_continues: bool | Non
     # 前のページ側が短い(最後の行で始まった段落)ときは句読点が無くてもよい。
     if "。" not in last + first:
         return False
-    tail = _TAG_RE.sub("", _RT_RE.sub("", last))
+    tail = strip_ruby(last)
     if len(tail) >= _SHORT_TAIL and "、" not in tail and "。" not in tail:
         return False
     return _ends_mid_sentence(last)

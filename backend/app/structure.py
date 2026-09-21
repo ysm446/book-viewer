@@ -109,7 +109,7 @@ def _toc(texts: dict[int, str], page_count: int) -> str:
         return ""
     chunks = []
     for p in [q for q in front if start <= q <= start + 4]:
-        text = _IMAGE_RE.sub(lambda m: m.group(1), texts[p])
+        text = _IMAGE_RE.sub(lambda m: m.group(1), transcribe.strip_ruby(texts[p]))
         chunks.append(f"(p.{p + 1})\n{text.strip()}")
     return "\n".join(chunks)[:_TOC_MAX_CHARS]
 

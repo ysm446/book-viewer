@@ -31,6 +31,10 @@ _BANNER_RATIO = 4
 # 段落がここで終わっていれば、次の段落とはつながない。
 SENTENCE_END = ("。", "」", "』", ")", "）", "！", "？", "!", "?")
 _CAPTION_RE = re.compile(r"^\s*(図|表|写真|グラフ)\s*[0-9０-９]")
+# ルビの候補(かなだけ)と、ルビの親文字にする字(漢字)。
+_KANA_RE = re.compile(r"^[ぁ-ゖァ-ヺー]+$")
+_KANJI_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff々〆ヶ]")
+_RUBY_TAG_RE = re.compile(r"<rt>.*?</rt>|</?ruby>")
 
 
 @dataclass
@@ -61,7 +65,8 @@ def _get_analyzer():
                     "YomiToku が入っていません(backend/requirements.txt を再インストールしてください)"
                 ) from e
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            # 書名バー・ページ表示(ヘッダー/フッター)は本文に入れない。ルビは今は落とす。
+            # 書名バー・ページ表示(ヘッダー/フッター)は本文に入れない。段落の中身からはルビを除く
+            # (ルビは words の座標から親文字に付け直す。_split_paragraphs)。
             _analyzer = DocumentAnalyzer(device=device, ignore_meta=True, ignore_ruby=True)
         return _analyzer
 
@@ -110,11 +115,68 @@ def _is_ruby_only(p: dict, words: list[dict], page_char: float) -> bool:
     return bool(sizes) and _median(sizes) < page_char * 0.7
 
 
+def _ruby_marks(line: list[dict], rubies: list[dict], char: float) -> list[tuple[int, int, str]]:
+    """行にかかるルビを、行の文字の範囲 [(始まり, 終わり, 読み)] にする。
+
+    行の中の字の位置は断片ごとに均等割りで見積もり、ルビの範囲にかかる漢字の並び
+    (いちばん長いもの)を親文字とする。漢字にかからないルビは捨てる。
+    """
+    centers: list[float] = []
+    chars: list[str] = []
+    for pc in line:
+        text = pc["text"].strip()
+        step = (pc["end"] - pc["start"]) / max(len(text), 1)
+        for k, c in enumerate(text):
+            chars.append(c)
+            centers.append(pc["start"] + (k + 0.5) * step)
+    marks: list[tuple[int, int, str]] = []
+    for r in sorted(rubies, key=lambda r: r["start"]):
+        tol = char * 0.3
+        covered = [i for i, c in enumerate(centers) if r["start"] - tol <= c <= r["end"] + tol]
+        runs: list[list[int]] = []
+        for i in covered:
+            if not _KANJI_RE.match(chars[i]):
+                continue
+            if runs and runs[-1][-1] == i - 1:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+        if not runs:
+            continue
+        run = max(runs, key=len)
+        # 熟語の読みは 1 字あたり 2 字ほどまで。読みが長すぎれば、位置の見積もりのずれで
+        # 外れた隣の漢字まで広げる(花崗|かこうがん → 花崗岩)。
+        wide = char * 0.8
+        while len(run) >= 2 and len(r["text"]) > 2 * len(run):
+            after, before = run[-1] + 1, run[0] - 1
+            if after < len(chars) and _KANJI_RE.match(chars[after]) and centers[after] <= r["end"] + wide:
+                run.append(after)
+            elif before >= 0 and _KANJI_RE.match(chars[before]) and centers[before] >= r["start"] - wide:
+                run.insert(0, before)
+            else:
+                break
+        following = "".join(chars[run[-1] + 1 : run[-1] + 1 + len(r["text"])])
+        if following == r["text"]:
+            continue  # 本文の送り仮名が小さく読まれたもの(還|って って)
+        if marks and run[0] < marks[-1][1]:
+            continue  # 前のルビと重なる
+        marks.append((run[0], run[-1] + 1, r["text"]))
+    return marks
+
+
+def _line_text(line: list[dict], marks: list[tuple[int, int, str]]) -> str:
+    text = "".join(pc["text"].strip() for pc in line)
+    for start, end, reading in reversed(marks):
+        text = f"{text[:start]}<ruby>{text[start:end]}<rt>{reading}</rt></ruby>{text[end:]}"
+    return text
+
+
 def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | None]:
     """YomiToku の段落を、行頭の字下げで本来の段落に分け直す。
 
     YomiToku は隣り合う段落を 1 つにまとめることがある。行(word)ごとの座標から
     行を組み立て、行頭が 1/2 文字以上下がっている行を新しい段落の始まりとみなす。
+    ルビは親文字に <ruby>漢字<rt>かんじ</rt></ruby> として付ける。
     戻り値は (段落のリスト, 先頭行が字下げされているか)。行が 1 本だけなど判断できない
     ときは None。行を取り出せないときは段落全体を 1 つとして返す。
     """
@@ -122,25 +184,33 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
     x1, y1, x2, y2 = p["box"]
     vertical = p.get("direction") == "vertical"
     pieces = []
+    rubies = []
     for w in words:
         cx, cy = _center(w)
-        if not (x1 <= cx <= x2 and y1 <= cy <= y2):
-            continue
-        if (w.get("direction") == "vertical") != vertical:
-            continue
         xs = [pt[0] for pt in w["points"]]
         ys = [pt[1] for pt in w["points"]]
         # 縦書き: 行は x、行頭は上端、字の大きさは幅。横書き: 行は y、行頭は左端、字の大きさは高さ。
         if vertical:
-            pieces.append({"cross": cx, "start": min(ys), "size": max(xs) - min(xs), "text": w["content"]})
+            pc = {"cross": cx, "start": min(ys), "end": max(ys), "size": max(xs) - min(xs), "text": w["content"]}
         else:
-            pieces.append({"cross": cy, "start": min(xs), "size": max(ys) - min(ys), "text": w["content"]})
+            pc = {"cross": cy, "start": min(xs), "end": max(xs), "size": max(ys) - min(ys), "text": w["content"]}
+        if _KANA_RE.match(pc["text"].strip()):
+            # ルビの候補(かなだけの行)。段落の最初の行のルビは段落の枠の外に出るので、少し広げて拾う。
+            m = pc["size"] * 2
+            if x1 - m <= cx <= x2 + m and y1 - m <= cy <= y2 + m:
+                rubies.append(pc)
+        if not (x1 <= cx <= x2 and y1 <= cy <= y2):
+            continue
+        if (w.get("direction") == "vertical") != vertical:
+            continue
+        pieces.append(pc)
     if not pieces:
         return [whole], None
     sizes = sorted(pc["size"] for pc in pieces)
     char = sizes[len(sizes) // 2] or 1
     # ルビ(本文の半分ほどの小さい字)は本文に入れない。
     pieces = [pc for pc in pieces if pc["size"] >= char * 0.7]
+    rubies = [r for r in rubies if r["size"] < char * 0.7]
     # 同じ行の断片(囲み文字などで分かれたもの)をまとめ、行を読み順に並べる。
     pieces.sort(key=lambda pc: -pc["cross"] if vertical else pc["cross"])
     lines: list[list[dict]] = []
@@ -149,10 +219,21 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
             lines[-1].append(pc)
         else:
             lines.append([pc])
+    # ルビは親の行の右(縦書き)・上(横書き)に付く。いちばん近い行に割り当てる。
+    ruby_of: dict[int, list[dict]] = {}
+    for r in rubies:
+        best = None
+        for n, line in enumerate(lines):
+            gap = (r["cross"] - line[0]["cross"]) if vertical else (line[0]["cross"] - r["cross"])
+            if 0 < gap < char * 1.2 and (best is None or gap < best[1]):
+                best = (n, gap)
+        if best is not None:
+            ruby_of.setdefault(best[0], []).append(r)
     rows = []
-    for line in lines:
+    for n, line in enumerate(lines):
         line.sort(key=lambda pc: pc["start"])
-        rows.append((line[0]["start"], "".join(pc["text"].strip() for pc in line)))
+        marks = _ruby_marks(line, ruby_of.get(n, []), char)
+        rows.append((line[0]["start"], _line_text(line, marks)))
     base = min(start for start, _ in rows)
     paras: list[str] = []
     for i, (start, text) in enumerate(rows):
@@ -161,7 +242,7 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
         else:
             paras[-1] += text
     # 行の取り出しが段落の中身と食い違う(字が欠ける)ときは分割をあきらめる。
-    if abs(len("".join(paras)) - len(whole)) > max(2, len(whole) // 20):
+    if abs(len(_RUBY_TAG_RE.sub("", "".join(paras))) - len(whole)) > max(2, len(whole) // 20):
         return [whole], None
     first_indented = rows[0][0] - base > char * 0.5 if len(rows) >= 2 else None
     return [t for t in paras if t], first_indented
