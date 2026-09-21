@@ -77,6 +77,34 @@ def _center(w: dict) -> tuple[float, float]:
     return sum(pt[0] for pt in pts) / 4, sum(pt[1] for pt in pts) / 4
 
 
+def _median(values: list[float]) -> float:
+    values = sorted(values)
+    return values[len(values) // 2] if values else 0.0
+
+
+def _word_size(w: dict) -> float:
+    """行(word)の字の大きさ。縦書きは幅、横書きは高さ。"""
+    xs = [pt[0] for pt in w["points"]]
+    ys = [pt[1] for pt in w["points"]]
+    return (max(xs) - min(xs)) if w.get("direction") == "vertical" else (max(ys) - min(ys))
+
+
+def _is_ruby_only(p: dict, words: list[dict], page_char: float) -> bool:
+    """ルビだけでできた段落か(本文より明らかに小さい字の、短い段落)。
+
+    ignore_ruby でも、本文から離れたルビが単独の段落として残ることがある。
+    """
+    if page_char <= 0 or len(_text(p)) > 20:
+        return False
+    x1, y1, x2, y2 = p["box"]
+    sizes = [
+        _word_size(w)
+        for w in words
+        if x1 <= _center(w)[0] <= x2 and y1 <= _center(w)[1] <= y2
+    ]
+    return bool(sizes) and _median(sizes) < page_char * 0.7
+
+
 def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | None]:
     """YomiToku の段落を、行頭の字下げで本来の段落に分け直す。
 
@@ -168,8 +196,12 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
             regions.append({"box": f["box"], "order": f.get("order", 0)})
     regions += [{"box": t["box"], "order": t.get("order", 0)} for t in data.get("tables", [])]
 
+    words = data.get("words", [])
+    page_char = _median([_word_size(w) for w in words])
     paragraphs = [
-        p for p in data.get("paragraphs", []) if p.get("role") not in ("page_header", "page_footer")
+        p
+        for p in data.get("paragraphs", [])
+        if p.get("role") not in ("page_header", "page_footer") and not _is_ruby_only(p, words, page_char)
     ]
     # キャプションの判定: 図(またはキャプション)に接していて、図番号で始まるか、
     # 「。」で終わらない短い段落(見出しは除く)。キャプションに接した段落も同じ図のものとして連ねる。
@@ -201,7 +233,6 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
     for k in sorted(caption_of, key=lambda j: paragraphs[j].get("order", 0)):
         captions.setdefault(caption_of[k], []).append(_text(paragraphs[k]))
 
-    words = data.get("words", [])
     body: list[dict] = list(banners)
     for k, p in enumerate(paragraphs):
         if k in caption_of or not _text(p):

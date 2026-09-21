@@ -669,13 +669,73 @@ def get_analysis(root: Path, work_id: str) -> dict | None:
     return result
 
 
-# ---- 作品チャット(リーダー横のチャットウィンドウ用)------------------------
+# ---- 本のチャット(リーダー横のチャットウィンドウ用)------------------------
 
 _CHAT_SYSTEM = (
-    "あなたは漫画作品について読者の質問に答えるアシスタントです。"
-    "以下の作品情報を踏まえ、日本語で簡潔に答えてください。"
-    "作品情報に無いことは推測であると断ったうえで述べ、断定しすぎないこと。"
+    "あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。"
+    "以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。"
+    "本文を根拠にするときは、どのページか(p.○)を添えてください。"
+    "本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。"
+    "読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。"
 )
+
+# チャットに渡す本文の既定の上限(文字数)。コンテキスト長が分かれば呼び出し側が調整する。
+CHAT_CONTEXT_CHARS = 12000
+_IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_RT_RE = re.compile(r"<rt>.*?</rt>")
+_TAG_RE = re.compile(r"</?ruby>")
+
+
+def _plain_for_llm(markdown: str) -> str:
+    """本文の Markdown を LLM に渡す形にする(図は [図: キャプション]、ルビは落とす)。"""
+    text = _IMAGE_REF_RE.sub(lambda m: f"[図: {m.group(1)}]" if m.group(1) else "[図]", markdown)
+    text = _RT_RE.sub("", text)
+    return _TAG_RE.sub("", text).strip()
+
+
+def _reading_context(
+    root: Path, work_id: str, current_page: int | None, budget: int
+) -> tuple[list[str], int | None, int | None]:
+    """読者が読んだ範囲(現在ページまで)の本文を、現在ページに近い順に budget 文字まで集める。
+
+    戻り値は (ページ番号順に並んだ「--- p.N ---」付きの本文, 最初のページ, 最後のページ)。
+    本文が無ければ ([], None, None)。先のページは渡さない(ネタバレ防止)。
+    """
+    from . import transcribe  # transcribe が analysis を import するため、ここで読む
+
+    try:
+        done = transcribe.done_pages(root, work_id)
+    except transcribe.TranscribeError:
+        return [], None, None
+    pages = [p for p in done if current_page is None or p <= current_page]
+    picked: list[tuple[int, str]] = []
+    used = 0
+    for p in reversed(pages):
+        text = _plain_for_llm(transcribe.read_text(root, work_id, p) or "")
+        if not text:
+            continue
+        if picked and used + len(text) > budget:
+            break
+        picked.append((p, text))
+        used += len(text)
+    if not picked:
+        return [], None, None
+    picked.reverse()
+    return [f"--- p.{p + 1} ---\n{t}" for p, t in picked], picked[0][0], picked[-1][0]
+
+
+def _book_info(root: Path, work_id: str) -> list[str]:
+    with connect(root) as conn:
+        row = conn.execute(
+            "SELECT title, author, page_count FROM works WHERE id = ?", (work_id,)
+        ).fetchone()
+    if row is None:
+        return []
+    info = [f"書名: {row['title']}"]
+    if (row["author"] or "").strip():
+        info.append(f"著者: {row['author']}")
+    info.append(f"全 {row['page_count']} ページ")
+    return info
 
 
 def _story_state_text(state: dict) -> str:
@@ -714,44 +774,48 @@ def _build_chat_messages(
     include_image: bool,
     page_focus: bool = False,
     system_prompt: str | None = None,
+    context_chars: int | None = None,
 ) -> list[dict]:
-    """作品情報を system に、会話履歴を並べた LLM メッセージ列を組む。
+    """本の情報と本文(読んだ範囲)を system に、会話履歴を並べた LLM メッセージ列を組む。
 
     - system_prompt: チャットの基本人格(空/None なら既定 _CHAT_SYSTEM)。
-    - page_focus=True: 作品全体の情報を踏まえつつ、現在ページの場面を中心に答えさせる。
-    - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える。
+    - page_focus=True: 本文を踏まえつつ、現在ページの内容を中心に答えさせる。
+    - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える(Vision モデルのみ)。
+    - context_chars: 本文を渡す上限(文字数)。None なら CHAT_CONTEXT_CHARS。
     """
-    state = _get_story_state(root, work_id)
-    ctx: list[str] = [f"作品タイトル: {_title(root, work_id)}"]
-    st = _story_state_text(state)
-    if st:
-        ctx.append(st)
-    else:
-        # story_state(構造化まとめ)が無ければ、従来のあらすじ(analysis.summary)を使う。
-        a = get_analysis(root, work_id)
-        summ = (a.get("summary") or "").strip() if a else ""
-        if summ:
-            ctx.append(f"あらすじ:\n{summ}")
     focus = (system_prompt or "").strip() or _CHAT_SYSTEM
+    sections = ["## 本の情報", *_book_info(root, work_id)]
+    if current_page is not None:
+        sections.append(f"読者が今開いているページ: p.{current_page + 1}")
+
+    budget = context_chars if context_chars and context_chars > 0 else CHAT_CONTEXT_CHARS
+    body, first, last = _reading_context(root, work_id, current_page, budget)
+    if body:
+        note = f"p.{first + 1}〜p.{last + 1}"
+        if first > 0:
+            note += "。これより前のページは長さの都合で省略"
+        sections += ["", f"## 本文(読者が読んだ範囲のうち、今のページに近い部分: {note})", *body]
+    else:
+        sections += [
+            "",
+            "## 本文",
+            "(まだ文字起こしされていないため、本文はありません。本文を根拠にした答えはできないことを"
+            "読者に伝えたうえで、書名から分かる範囲・一般的な知識として答えてください。)",
+        ]
+
     if page_focus and current_page is not None:
-        ctx.append(f"読者が今開いているページ: {current_page + 1}ページ目")
-        cap = get_page_analysis(root, work_id, current_page)
-        if cap and (cap.get("description") or "").strip():
-            ctx.append(f"現在ページの内容: {cap['description']}")
-        if cap and (cap.get("text") or "").strip():
-            ctx.append(f"現在ページのセリフ(OCR):\n{cap['text']}")
         focus += (
-            "\n読者はこの現在ページについて尋ねています。作品全体の文脈を踏まえつつ、"
-            "回答は現在ページの場面を中心に組み立ててください。"
+            f"\n読者はいま開いているページ(p.{current_page + 1})について尋ねています。"
+            "本文全体の流れを踏まえつつ、回答はこのページの内容を中心に組み立ててください。"
         )
 
-    llm_messages: list[dict] = [{"role": "system", "content": focus + "\n\n" + "\n\n".join(ctx)}]
-    last = len(messages) - 1
+    llm_messages: list[dict] = [{"role": "system", "content": focus + "\n\n" + "\n".join(sections)}]
+    last_i = len(messages) - 1
     for i, m in enumerate(messages):
         role = m.get("role", "user")
         content = m.get("content", "")
         attach = (
-            i == last
+            i == last_i
             and role == "user"
             and include_image
             and archive_path is not None
@@ -777,10 +841,19 @@ def chat_about_work(
     system_prompt: str | None = None,
     model: str = "local",
     think: bool | None = None,
+    context_chars: int | None = None,
 ) -> str:
-    """作品情報(あらすじ+登場人物+伏線)を文脈に、会話履歴へ応答する(非ストリーム)。"""
+    """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。"""
     llm_messages = _build_chat_messages(
-        root, work_id, messages, current_page, archive_path, include_image, page_focus, system_prompt
+        root,
+        work_id,
+        messages,
+        current_page,
+        archive_path,
+        include_image,
+        page_focus,
+        system_prompt,
+        context_chars,
     )
     return llm.chat(base_url, llm_messages, model=model, think=think)
 
@@ -797,10 +870,19 @@ def chat_about_work_stream(
     system_prompt: str | None = None,
     model: str = "local",
     think: bool | None = None,
+    context_chars: int | None = None,
 ):
     """chat_about_work のストリーム版。差分 dict を順に yield する。"""
     llm_messages = _build_chat_messages(
-        root, work_id, messages, current_page, archive_path, include_image, page_focus, system_prompt
+        root,
+        work_id,
+        messages,
+        current_page,
+        archive_path,
+        include_image,
+        page_focus,
+        system_prompt,
+        context_chars,
     )
     yield from llm.chat_stream(base_url, llm_messages, model=model, think=think)
 
@@ -822,8 +904,8 @@ _QUESTIONS_SCHEMA = {
 
 # 候補作りに渡す直近の往復数。多くしても候補は良くならず、待ち時間だけ伸びる。
 SUGGEST_HISTORY_TURNS = 2
-# 現在ページの OCR は候補作りには要点だけあればよいので頭を切って渡す。
-SUGGEST_OCR_CHARS = 400
+# 候補作りには、今のページ付近の本文が少しあれば足りる。
+SUGGEST_CONTEXT_CHARS = 3000
 
 
 def _recent_exchanges(messages: list[dict], turns: int) -> list[str]:
@@ -848,44 +930,30 @@ def suggest_chat_questions(
     current_page: int | None = None,
     model: str = "local",
 ) -> list[str]:
-    """いまの作品・ページ・直近の会話を踏まえた質問候補を最大 3 件作る。
+    """いまの本・ページ・直近の会話を踏まえた質問候補を最大 3 件作る。
 
     チャット末尾の候補チップに、固定の定番質問と混ぜて並べるためのもの。
     画像もツールも使わない軽い 1 回の呼び出しで、作れなければ空を返す
     (呼び出し側は固定の候補だけを出す)。
     """
-    ctx: list[str] = [f"作品タイトル: {_title(root, work_id)}"]
-    st = _story_state_text(_get_story_state(root, work_id))
-    if st:
-        ctx.append(st)
-    else:
-        a = get_analysis(root, work_id)
-        summ = (a.get("summary") or "").strip() if a else ""
-        if summ:
-            ctx.append(f"あらすじ:\n{summ}")
-    if current_page is not None:
-        ctx.append(f"読者が今開いているページ: {current_page + 1}ページ目")
-        cap = get_page_analysis(root, work_id, current_page)
-        if cap and (cap.get("description") or "").strip():
-            ctx.append(f"現在ページの内容: {cap['description']}")
-        ocr = (cap.get("text") or "").strip() if cap else ""
-        if ocr:
-            ctx.append(f"現在ページのセリフ(OCR):\n{ocr[:SUGGEST_OCR_CHARS]}")
-    # 作品情報が題名しか無い(未解析)なら、固有名詞の入った候補は作れない。
-    if len(ctx) <= 1:
+    body, _, _ = _reading_context(root, work_id, current_page, SUGGEST_CONTEXT_CHARS)
+    # 本文が無い(未文字起こし)なら、内容に即した候補は作れない。
+    if not body:
         return []
+    ctx = [*_book_info(root, work_id), "", *body]
 
     parts = [
-        "以下は読者がいま読んでいる漫画の情報です。",
+        "以下は読者がいま読んでいる本の情報と、今のページ付近の本文です。",
         "この読者が続けて聞きたくなる質問を3つ作ってください。",
         "",
         "条件:",
         "- 読者がアシスタント(あなた)に投げる文として書く。30字以内、日本語、疑問文または依頼文",
-        "- 作品の固有名詞(人物名・場所・出来事)を使い、この作品にしか当てはまらない内容にする",
+        "- 本文に出てくる用語・人物・出来事を使い、この本のこの箇所にしか当てはまらない内容にする",
         "- 一般論(「テーマは何ですか」など)や、すでに答えの出ている質問は避ける",
-        "- 3つは互いに違う切り口にする(人物 / 関係 / 伏線 / いまの場面 / この先の展開 など)",
+        "- 3つは互いに違う切り口にする(用語の意味 / 理由・仕組み / 具体例 / 前とのつながり など)",
+        "- まだ読んでいない先の内容を尋ねる質問は作らない",
         "",
-        "## 作品情報",
+        "## 本の情報と本文",
         *ctx,
     ]
     recent = _recent_exchanges(messages or [], SUGGEST_HISTORY_TURNS)

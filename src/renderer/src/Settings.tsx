@@ -36,9 +36,11 @@ const DEFAULT_SYSTEM_PROMPT =
 
 // main/settings.ts の DEFAULT_CHAT_SYSTEM_PROMPT と一致させること。
 const DEFAULT_CHAT_SYSTEM_PROMPT =
-  'あなたは漫画作品について読者の質問に答えるアシスタントです。' +
-  '以下の作品情報を踏まえ、日本語で簡潔に答えてください。' +
-  '作品情報に無いことは推測であると断ったうえで述べ、断定しすぎないこと。'
+  'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
+  '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
+  '本文を根拠にするときは、どのページか(p.○)を添えてください。' +
+  '本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。' +
+  '読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。'
 
 function ResetIcon(): JSX.Element {
   return (
@@ -696,7 +698,7 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
             {tab === 'chat' && (
               <>
           <section className="settings-section">
-            <h3 className="settings-section-title">作品チャット</h3>
+            <h3 className="settings-section-title">本のチャット</h3>
 
             <div className="settings-row settings-row-col">
               <div className="syslabel-row">

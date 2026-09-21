@@ -80,6 +80,8 @@ class ChatRequest(BaseModel):
     page_focus: bool = False
     system_prompt: str | None = None
     think: bool = False
+    # 本文を渡す上限(文字数)。None なら既定(analysis.CHAT_CONTEXT_CHARS)。
+    context_chars: int | None = None
 
 
 def _chat_setup(work_id: str, body: ChatRequest):
@@ -104,7 +106,7 @@ def _chat_setup(work_id: str, body: ChatRequest):
 
 @router.post("/works/{work_id}/chat")
 def work_chat(work_id: str, body: ChatRequest) -> dict:
-    """作品について会話する(あらすじ+登場人物を文脈に、任意で現在ページ画像を添付)。"""
+    """本について会話する(本文の読んだ範囲を文脈に、任意で現在ページ画像を添付)。"""
     r, base_url, archive_path = _chat_setup(work_id, body)
     try:
         reply = analysis_mod.chat_about_work(
@@ -118,6 +120,7 @@ def work_chat(work_id: str, body: ChatRequest) -> dict:
             page_focus=body.page_focus,
             system_prompt=body.system_prompt,
             think=body.think,
+            context_chars=body.context_chars,
         )
     except llm.LlmError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -143,6 +146,7 @@ def work_chat_stream(work_id: str, body: ChatRequest) -> StreamingResponse:
                 page_focus=body.page_focus,
                 system_prompt=body.system_prompt,
                 think=body.think,
+                context_chars=body.context_chars,
             ):
                 yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
         except llm.LlmError as e:

@@ -5,8 +5,10 @@ import { Markdown } from './Markdown'
 interface ReaderChatProps {
   root: string
   work: Work
-  /** 現在開いているページ(先頭)。画像添付・文脈に使う。 */
+  /** 現在開いているページ(見開きなら後ろ側)。ここまでの本文を文脈に使い、画像添付にも使う。 */
   currentPage: number
+  /** 本文を渡す上限(文字数)。コンテキスト長の設定から決める。 */
+  contextChars: number
   /** 思考(reasoning)モード。設定から渡す。 */
   think: boolean
   /** チャットのシステムプロンプト(設定から差し替え可能)。 */
@@ -21,23 +23,24 @@ interface ReaderChatProps {
 // いつでも使える定番の質問。候補チップは会話と一緒にスクロールするので、
 // 固定枠だった頃より多めに持っておき ⟳ で送っていく。
 const TEMPLATES = [
-  'あらすじを教えて',
-  '登場人物を整理して',
-  'ここまでの伏線は？',
-  'この場面について説明して',
-  '人物の関係を整理して',
+  'このページの要点は？',
+  'ここまでの内容を要約して',
+  '難しいところをかみくだいて',
+  '出てきた用語を整理して',
   'ここまでの流れを3行で',
-  '見落としやすい描写は？',
-  'この先どうなりそう？'
+  '具体例を挙げて説明して',
+  '前の内容とのつながりは？',
+  '大事なポイントを箇条書きで'
 ]
 const TEMPLATE_WINDOW = 4 // 同時に見せる候補の件数
 const MAX_DYNAMIC = 2 // うち、内容から作られた質問に使う枠
 
-/** 作品について会話するサイドチャット。履歴はセッションのみ(作品を切り替えると消える)。 */
+/** 本について会話するサイドチャット。履歴はセッションのみ(本を切り替えると消える)。 */
 export function ReaderChat({
   root,
   work,
   currentPage,
+  contextChars,
   think,
   systemPrompt,
   dynamicSuggestions,
@@ -163,7 +166,7 @@ export function ReaderChat({
         root,
         work.id,
         base,
-        { currentPage, includeImage, pageFocus, systemPrompt, think },
+        { currentPage, includeImage, pageFocus, systemPrompt, think, contextChars },
         {
           onReasoning: (t) => {
             reasoning += t
@@ -196,7 +199,7 @@ export function ReaderChat({
   return (
     <div className="reader-chat" style={width !== undefined ? { flexBasis: width } : undefined}>
       <div className="reader-chat-head">
-        <span className="reader-chat-title">✦ この作品について質問</span>
+        <span className="reader-chat-title">✦ この本について質問</span>
         <button
           className="btn reader-chat-clear"
           onClick={clearChat}
@@ -222,7 +225,7 @@ export function ReaderChat({
       >
         {messages.length === 0 && (
           <div className="reader-chat-intro">
-            こんにちは。この作品について質問にお答えします。下の候補から選ぶか、質問を入力してください。
+            この本について質問にお答えします。いま開いているページまでの本文をもとに答えます（先のページは読みません）。下の候補から選ぶか、質問を入力してください。
           </div>
         )}
         {messages.map((m, i) => {
@@ -277,7 +280,7 @@ export function ReaderChat({
       </div>
 
       <div className="reader-chat-opts">
-        <label className="chat-opt" title="作品全体を踏まえつつ、現在ページの場面を中心に答えます">
+        <label className="chat-opt" title="ここまでの流れを踏まえつつ、現在ページの内容を中心に答えます">
           <input
             type="checkbox"
             checked={pageFocus}

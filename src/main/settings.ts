@@ -48,9 +48,9 @@ export interface AppSettings {
     storySummaryEvery: number
     /** 思考(reasoning)モードを有効にするか(対応モデルのみ) */
     thinkingEnabled: boolean
-    /** 作品チャットのシステムプロンプト(差し替え可能) */
+    /** 本のチャットのシステムプロンプト(差し替え可能) */
     chatSystemPrompt: string
-    /** 作品チャットの候補チップに、内容から作った質問を混ぜるか */
+    /** チャットの候補チップに、本文から作った質問を混ぜるか */
     chatDynamicSuggestions: boolean
   }
 }
@@ -60,11 +60,20 @@ export const DEFAULT_SYSTEM_PROMPT =
   'あなたは漫画の内容を客観的に説明するアシスタントです。' +
   '推測は控えめにし、画像に実際に見えたものを日本語で簡潔に記述してください。'
 
-/** 作品チャットの既定システムプロンプト(backend analysis._CHAT_SYSTEM と一致させること)。 */
+/** 本のチャットの既定システムプロンプト(backend analysis._CHAT_SYSTEM と一致させること)。 */
 export const DEFAULT_CHAT_SYSTEM_PROMPT =
+  'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
+  '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
+  '本文を根拠にするときは、どのページか(p.○)を添えてください。' +
+  '本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。' +
+  '読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。'
+
+/** 以前(漫画向け)の既定プロンプト。保存値がこれと同じなら新しい既定に置き換える。 */
+const LEGACY_CHAT_SYSTEM_PROMPTS = [
   'あなたは漫画作品について読者の質問に答えるアシスタントです。' +
-  '以下の作品情報を踏まえ、日本語で簡潔に答えてください。' +
-  '作品情報に無いことは推測であると断ったうえで述べ、断定しすぎないこと。'
+    '以下の作品情報を踏まえ、日本語で簡潔に答えてください。' +
+    '作品情報に無いことは推測であると断ったうえで述べ、断定しすぎないこと。'
+]
 
 const DEFAULTS: AppSettings = {
   pageMode: 'single',
@@ -124,7 +133,12 @@ export function getSettings(): AppSettings {
   if (existsSync(file)) {
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf-8')) as Partial<AppSettings>
-      return { ...DEFAULTS, ...parsed, llm: { ...DEFAULTS.llm, ...(parsed.llm ?? {}) } }
+      const llm = { ...DEFAULTS.llm, ...(parsed.llm ?? {}) }
+      // 手を加えていない旧既定(漫画向け)のままなら、本向けの既定に置き換える。
+      if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
+        llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT
+      }
+      return { ...DEFAULTS, ...parsed, llm }
     } catch {
       // 壊れたファイルは既定値で上書きせず退避し、既定値で動かす(復旧の余地を残す)。
       try {

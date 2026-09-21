@@ -429,6 +429,8 @@ interface ChatOpts {
   pageFocus?: boolean
   systemPrompt?: string
   think?: boolean
+  /** 本文を渡す上限(文字数)。省略時は backend の既定 */
+  contextChars?: number
 }
 
 function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
@@ -440,6 +442,7 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
     include_image: opts?.includeImage ?? false,
     page_focus: opts?.pageFocus ?? false,
     system_prompt: opts?.systemPrompt ?? null,
+    context_chars: opts?.contextChars ?? null,
     think: opts?.think ?? false
   })
 }

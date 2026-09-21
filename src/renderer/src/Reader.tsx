@@ -31,6 +31,14 @@ import type { AppSettings } from '../../preload'
 const CHAT_MIN = 260
 const CHAT_DEFAULT = 340
 
+/**
+ * チャットに渡す本文の上限(文字数)。日本語は 1 トークンあたりおよそ 1〜1.5 文字なので、
+ * コンテキスト長の半分程度を本文に回し、残りを指示・会話履歴・回答に空けておく。
+ */
+function chatContextChars(ctxSize: number): number {
+  return Math.min(Math.max(Math.floor(ctxSize * 0.5), 2000), 60000)
+}
+
 /** 画像(スクリーンショット)で読むか、文字起こしした本文で読むか。 */
 type ViewMode = 'image' | 'text'
 
@@ -967,7 +975,8 @@ export function Reader({
           <ReaderChat
             root={root}
             work={work}
-            currentPage={currentSpread[0]}
+            currentPage={currentSpread[currentSpread.length - 1]}
+            contextChars={chatContextChars(settings.llm.ctxSize)}
             think={settings.llm.thinkingEnabled}
             systemPrompt={settings.llm.chatSystemPrompt}
             dynamicSuggestions={settings.llm.chatDynamicSuggestions}
