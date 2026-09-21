@@ -21,6 +21,8 @@ _lock = threading.Lock()
 _CAPTION_MARGIN = 48
 # これより小さい(縦横とも)領域は図にしない(章番号の飾り文字など)。
 _MIN_FIGURE_PX = 80
+# キャプションの無い図に、代わりに添える図中の文字の上限(目次ページなどは長いため)。
+_INNER_TEXT_MAX = 2000
 # 幅が高さのこの倍を超え、中に文字がある「図」は見出しの帯とみなす。
 _BANNER_RATIO = 4
 # 段落がここで終わっていれば、次の段落とはつながない。
@@ -185,7 +187,7 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
     banners = []
     for f in data.get("figures", []):
         x1, y1, x2, y2 = f["box"]
-        inner = "".join(_text(p) for p in f.get("paragraphs", []))
+        inner = " ".join(_text(p) for p in f.get("paragraphs", []) if _text(p))
         if inner and (x2 - x1) > (y2 - y1) * _BANNER_RATIO:
             # ページ上端の帯は欄外の章名(柱)なので本文に入れない。
             if y2 < img.shape[0] * 0.1:
@@ -193,7 +195,8 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
             banners.append({"order": (f.get("order", 0), 0), "kind": "p", "text": inner,
                             "role": "section_headings", "continues": False})
         else:
-            regions.append({"box": f["box"], "order": f.get("order", 0)})
+            # 図の中の文字(章の扉の題名、図として取られた目次など)は、キャプションが無いときに使う。
+            regions.append({"box": f["box"], "order": f.get("order", 0), "inner": inner})
     regions += [{"box": t["box"], "order": t.get("order", 0)} for t in data.get("tables", [])]
 
     words = data.get("words", [])
@@ -267,6 +270,9 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure]]:
         if not ok:
             continue
         caption = " ".join(captions.get(i, []))
+        if not caption and r.get("inner"):
+            # キャプションの無い図は、図の中の文字で代える(章の扉・目次を本文データに残すため)。
+            caption = r["inner"][:_INNER_TEXT_MAX]
         body.append({"order": (r["order"], 0), "kind": "fig", "index": len(figures), "text": caption})
         figures.append(Figure(png=buf.tobytes(), caption=caption))
 

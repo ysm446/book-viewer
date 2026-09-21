@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   cancelAnalysis,
   clearAnalysisQueue,
-  enqueueAnalysis,
+  enqueueStructure,
   enqueueTranscribe,
   getAnalysisQueue,
   getLlmStatus,
@@ -112,9 +112,8 @@ export function App(): JSX.Element {
   const [renameValue, setRenameValue] = useState('')
   const [queue, setQueue] = useState<AnalysisQueue | null>(null)
   const [currentElapsed, setCurrentElapsed] = useState(0)
-  // 解析 / ページ解析パネルの開閉は作品をまたいで保持する。
+  // 目次パネルの開閉は本をまたいで保持する。
   const [readerShowInfo, setReaderShowInfo] = useState(false)
-  const [readerShowPageInfo, setReaderShowPageInfo] = useState(false)
   // しおり一覧は既定で常時表示。
   const [readerShowBookmarks, setReaderShowBookmarks] = useState(true)
   const [readerShowChat, setReaderShowChat] = useState(false)
@@ -275,31 +274,14 @@ export function App(): JSX.Element {
     }
   }, [query, root])
 
-  async function enqueueWork(w: Work): Promise<void> {
+  // 章立てと要約を作る(文字起こし済みの本文から。LLM が必要)。
+  async function structureWork(w: Work): Promise<void> {
     setMenuFor(null)
-    if (!root || !settings) return
-    if (
-      !window.confirm(`「${w.title}」を全ページ解析します。時間がかかる場合があります。よろしいですか？`)
-    ) {
-      return
-    }
-    const systemPrompt =
-      settings.llm.systemPromptEnabled && settings.llm.systemPrompt.trim()
-        ? settings.llm.systemPrompt
-        : undefined
-    const contextCount = settings.llm.usePageContext ? settings.llm.pageContextCount : 0
+    if (!root) return
     try {
-      setQueue(
-        await enqueueAnalysis(root, [w.id], settings.llm.samplePages, {
-          systemPrompt,
-          allPages: true,
-          contextCount,
-          useStorySummary: settings.llm.useStorySummary,
-          storyEvery: settings.llm.storySummaryEvery
-        })
-      )
-    } catch {
-      // 無視
+      setQueue(await enqueueStructure(root, w.id))
+    } catch (e) {
+      notify(`章立てと要約を開始できませんでした: ${(e as Error).message}`, null, true)
     }
   }
 
@@ -1124,9 +1106,9 @@ export function App(): JSX.Element {
                         role="menuitem"
                         disabled={!llmStatus.running}
                         title={llmStatus.running ? undefined : 'モデル未読込のため実行できません'}
-                        onClick={() => void enqueueWork(w)}
+                        onClick={() => void structureWork(w)}
                       >
-                        解析する（全ページ）
+                        章立てと要約を作る
                       </button>
                       <button
                         className="ex-popup-item"
@@ -1195,8 +1177,7 @@ export function App(): JSX.Element {
               onTagsChange={handleTagsChange}
               showInfo={readerShowInfo}
               onShowInfoChange={setReaderShowInfo}
-              showPageInfo={readerShowPageInfo}
-              onShowPageInfoChange={setReaderShowPageInfo}
+              llmReady={llmStatus.running}
               showBookmarks={readerShowBookmarks}
               onShowBookmarksChange={setReaderShowBookmarks}
               showChat={readerShowChat}
@@ -1218,7 +1199,11 @@ export function App(): JSX.Element {
               <>
                 <span className="queue-spin" />
                 <span className="sbq-title" title={queue.current.title}>
-                  {queue.current.kind === 'transcribe' ? '文字起こし: ' : ''}
+                  {queue.current.kind === 'transcribe'
+                    ? '文字起こし: '
+                    : queue.current.kind === 'structure'
+                      ? '章立て・要約: '
+                      : ''}
                   {queue.current.title}
                 </span>
                 <span className="sbq-bar">

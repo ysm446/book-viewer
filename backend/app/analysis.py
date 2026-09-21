@@ -724,6 +724,35 @@ def _reading_context(
     return [f"--- p.{p + 1} ---\n{t}" for p, t in picked], picked[0][0], picked[-1][0]
 
 
+def _read_chapters(
+    root: Path, work_id: str, current_page: int | None, budget: int
+) -> tuple[list[str], str | None]:
+    """読み終えた章(今のページより前で終わる章)の要約と、今読んでいる章の題名。
+
+    要約は今のページに近い章から budget 文字まで。先の章と本全体の要約は入れない(ネタバレ防止)。
+    章立てが無ければ ([], None)。
+    """
+    from . import structure  # structure が analysis を import するため、ここで読む
+
+    try:
+        chapters = structure.get_structure(root, work_id)["chapters"]
+    except Exception:  # noqa: BLE001 - 章立ては補助情報なので、読めなくても会話は続ける
+        return [], None
+    if current_page is None:
+        return [], None
+    current = next((c["title"] for c in chapters if c["start"] <= current_page <= c["end"]), None)
+    picked: list[str] = []
+    used = 0
+    for c in reversed([c for c in chapters if c["end"] < current_page and c.get("summary")]):
+        text = f"### {c['title']}(p.{c['start'] + 1}〜p.{c['end'] + 1})\n{c['summary']}"
+        if picked and used + len(text) > budget:
+            break
+        picked.append(text)
+        used += len(text)
+    picked.reverse()
+    return picked, current
+
+
 def _book_info(root: Path, work_id: str) -> list[str]:
     with connect(root) as conn:
         row = conn.execute(
@@ -789,11 +818,18 @@ def _build_chat_messages(
         sections.append(f"読者が今開いているページ: p.{current_page + 1}")
 
     budget = context_chars if context_chars and context_chars > 0 else CHAT_CONTEXT_CHARS
+    # 読み終えた章の要約に 1/3 まで、残りを今のページ付近の本文に使う。
+    summaries, current_chapter = _read_chapters(root, work_id, current_page, budget // 3)
+    if current_chapter:
+        sections.append(f"読者が今読んでいる章: {current_chapter}")
+    if summaries:
+        sections += ["", "## 読み終えた章の要約", *summaries]
+        budget -= sum(len(t) for t in summaries)
     body, first, last = _reading_context(root, work_id, current_page, budget)
     if body:
         note = f"p.{first + 1}〜p.{last + 1}"
         if first > 0:
-            note += "。これより前のページは長さの都合で省略"
+            note += "。これより前のページは長さの都合で省略(上の章の要約を参考に)"
         sections += ["", f"## 本文(読者が読んだ範囲のうち、今のページに近い部分: {note})", *body]
     else:
         sections += [

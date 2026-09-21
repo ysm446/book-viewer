@@ -2,13 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import {
   addBookmark,
   addWorkTag,
-  cancelAnalysis,
   deleteBookmark,
-  enqueueAnalysis,
-  getAnalysis,
-  getAnalysisQueue,
-  getPageAnalysis,
-  getWorkTags,
   listBookmarks,
   pageUrl,
   removeWorkTag,
@@ -18,7 +12,6 @@ import {
   setWorkWritingMode,
   type Bookmark,
   type Direction,
-  type PageAnalysis,
   type SpreadOffset,
   type Work,
   type WritingMode
@@ -26,6 +19,7 @@ import {
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
 import { TextView } from './TextView'
+import { TocPanel } from './TocPanel'
 import type { AppSettings } from '../../preload'
 
 const CHAT_MIN = 260
@@ -58,12 +52,11 @@ interface ReaderProps {
   allTags?: string[]
   /** タグが変わったとき、一覧側へ反映する。 */
   onTagsChange?: (workId: string, tags: string[]) => void
-  /** 解析パネルの開閉(作品をまたいで保持するため App 側で持つ)。 */
+  /** 目次・要約パネルの開閉(本をまたいで保持するため App 側で持つ)。 */
   showInfo: boolean
   onShowInfoChange: (v: boolean) => void
-  /** ページ解析パネルの開閉(同上)。 */
-  showPageInfo: boolean
-  onShowPageInfoChange: (v: boolean) => void
+  /** LLM が読み込まれているか(章立て・要約の作成に必要)。 */
+  llmReady: boolean
   /** しおり一覧の開閉(同上。既定は常時表示)。 */
   showBookmarks: boolean
   onShowBookmarksChange: (v: boolean) => void
@@ -132,8 +125,7 @@ export function Reader({
   onTagsChange,
   showInfo,
   onShowInfoChange,
-  showPageInfo,
-  onShowPageInfoChange,
+  llmReady,
   showBookmarks,
   onShowBookmarksChange,
   showChat,
@@ -198,17 +190,6 @@ export function Reader({
   // 表示設定バー(読み方向・見開きずらし)の開閉。
   const [showDisplay, setShowDisplay] = useState(false)
   const [tagInput, setTagInput] = useState('')
-  const [summary, setSummary] = useState<string | null>(null)
-  const [analyzedCount, setAnalyzedCount] = useState(0)
-  const [pageInfos, setPageInfos] = useState<Record<number, PageAnalysis | null>>({})
-  const [pageInfoVersion, setPageInfoVersion] = useState(0)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
-  const [progress, setProgress] = useState<{ current: number; total: number; phase: string } | null>(
-    null
-  )
-  const [elapsedSec, setElapsedSec] = useState(0)
-  const startRef = useRef<number | null>(null)
 
   const spreads = useMemo(
     () =>
@@ -359,176 +340,7 @@ export function Reader({
   // まだ付いていない既存タグの候補。
   const tagSuggestions = allTags.filter((t) => !tags.includes(t))
 
-  // 保存済みの解析結果(あらすじ + 解析済みページ数)を読み込む。
-  useEffect(() => {
-    getAnalysis(root, work.id)
-      .then((a) => {
-        setSummary(a.analysis?.summary ?? null)
-        setAnalyzedCount(a.analyzedPages.length)
-      })
-      .catch(() => {})
-  }, [root, work.id])
-
-  // ページ解析パネル表示時、現在見開きのページ解析を取得する。
-  // 未解析ページは数秒ごとに再取得し、解析が終わったら自動で表示する。
   const spreadKey = currentSpread.join(',')
-  const pageInfosRef = useRef(pageInfos)
-  pageInfosRef.current = pageInfos
-  useEffect(() => {
-    if (!showPageInfo) return
-    let cancelled = false
-    const fetchMissing = (force: boolean): void => {
-      currentSpread.forEach((p) => {
-        if (!force && pageInfosRef.current[p]) return
-        getPageAnalysis(root, work.id, p)
-          .then((d) => {
-            if (!cancelled) setPageInfos((m) => ({ ...m, [p]: d }))
-          })
-          .catch(() => {})
-      })
-    }
-    fetchMissing(true)
-    const id = setInterval(() => fetchMissing(false), 2500)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, work.id, spreadKey, showPageInfo, pageInfoVersion])
-
-  const analyzeTimer = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  function stopAnalyzePolling(): void {
-    if (analyzeTimer.current) {
-      clearInterval(analyzeTimer.current)
-      analyzeTimer.current = null
-    }
-  }
-
-  // キューを監視し、この作品が完了したら結果を反映する。
-  function watchQueue(): void {
-    stopAnalyzePolling()
-    analyzeTimer.current = setInterval(async () => {
-      try {
-        const q = await getAnalysisQueue()
-        const isCurrent = q.current?.work_id === work.id
-        const isPending = q.pending.some((p) => p.work_id === work.id)
-        if (isCurrent && q.current) {
-          setProgress({ current: q.current.current, total: q.current.total, phase: q.current.phase })
-          // 開始時刻をバックエンドの elapsed で補正(初回のみ)。
-          if (startRef.current === null) {
-            startRef.current = Date.now() - (q.current.elapsed ?? 0) * 1000
-          }
-        } else if (isPending) {
-          setProgress(null)
-        }
-        if (!isCurrent && !isPending) {
-          stopAnalyzePolling()
-          startRef.current = null
-          // この作品の最新の結果を見る(古い失敗エントリを拾わない)。
-          const recents = q.recent.filter((r) => r.work_id === work.id)
-          const rec = recents[recents.length - 1]
-          if (rec?.status === 'error') setAnalyzeError(rec.error ?? '解析に失敗しました')
-          try {
-            const a = await getAnalysis(root, work.id)
-            setSummary(a.analysis?.summary ?? null)
-            setAnalyzedCount(a.analyzedPages.length)
-            const t = await getWorkTags(root, work.id)
-            setTags(t)
-            onTagsChange?.(work.id, t)
-            setPageInfoVersion((v) => v + 1)
-          } catch {
-            // 反映失敗は無視
-          }
-          setAnalyzing(false)
-          setProgress(null)
-        }
-      } catch {
-        // 一時的な取得失敗は無視
-      }
-    }, 700)
-  }
-
-  async function startAnalyze(opts?: {
-    focusPage?: number
-    pages?: number[]
-    summaryOnly?: boolean
-  }): Promise<void> {
-    setAnalyzing(true)
-    setAnalyzeError(null)
-    setProgress(null)
-    startRef.current = null
-    setElapsedSec(0)
-    const systemPrompt =
-      settings.llm.systemPromptEnabled && settings.llm.systemPrompt.trim()
-        ? settings.llm.systemPrompt
-        : undefined
-    const contextCount = settings.llm.usePageContext ? settings.llm.pageContextCount : 0
-    try {
-      await enqueueAnalysis(root, [work.id], settings.llm.samplePages, {
-        ...opts,
-        systemPrompt,
-        contextCount,
-        useStorySummary: settings.llm.useStorySummary,
-        storyEvery: settings.llm.storySummaryEvery
-      })
-    } catch (e) {
-      setAnalyzeError((e as Error).message)
-      setAnalyzing(false)
-      return
-    }
-    watchQueue()
-  }
-
-  // 増分解析: 開いているページを優先して未解析ページを埋める。
-  function runAnalyze(): void {
-    void startAnalyze({ focusPage: currentSpread[0] })
-  }
-
-  // 指定ページだけ解析する。
-  function analyzeThisPage(p: number): void {
-    void startAnalyze({ pages: [p] })
-  }
-
-  // ページ解析はやり直さず、既存の解析済みキャプションからあらすじ + タグだけ再生成する。
-  function regenerateSummary(): void {
-    void startAnalyze({ summaryOnly: true })
-  }
-
-  // 全ページを再解析する(時間がかかるため確認)。
-  function analyzeAll(): void {
-    if (!window.confirm(`全 ${count} ページを解析します。時間がかかる場合があります。よろしいですか？`)) {
-      return
-    }
-    void startAnalyze({ pages: Array.from({ length: count }, (_, i) => i) })
-  }
-
-  async function cancelAnalyze(): Promise<void> {
-    try {
-      await cancelAnalysis(work.id)
-    } catch {
-      // 無視
-    }
-  }
-
-  // アンマウント時にポーリングを止める。
-  useEffect(() => () => stopAnalyzePolling(), [])
-
-  // 経過時間を1秒ごとに更新(実行中のみ)。
-  useEffect(() => {
-    if (!analyzing) return
-    const id = setInterval(() => {
-      if (startRef.current !== null) {
-        setElapsedSec(Math.max(0, Math.floor((Date.now() - startRef.current) / 1000)))
-      }
-    }, 1000)
-    return () => clearInterval(id)
-  }, [analyzing])
-
-  const progressPct =
-    progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
-  const queued = analyzing && !progress
-  const elapsedLabel = `${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, '0')}`
 
   // キーボード操作。
   useEffect(() => {
@@ -649,9 +461,9 @@ export function Reader({
         <button
           className={`btn ${showInfo ? 'btn-active' : ''}`}
           onClick={() => onShowInfoChange(!showInfo)}
-          title="解析 / あらすじ"
+          title="目次と章ごとの要約"
         >
-          解析{analyzing ? `… ${progressPct}%` : ''}
+          目次
         </button>
         <button
           className={`btn ${showChat ? 'btn-active' : ''}`}
@@ -748,78 +560,17 @@ export function Reader({
               <option key={t} value={t} />
             ))}
           </datalist>
-          <button
-            className="btn tag-generate"
-            onClick={regenerateSummary}
-            disabled={analyzing || analyzedCount === 0}
-            title={
-              analyzedCount === 0
-                ? '先にページ解析が必要です（解析パネルから実行）'
-                : '解析済みページの内容からタグを追加生成します。手で付けたタグは消えません（あらすじも更新されます）'
-            }
-          >
-            {analyzing ? '生成中…' : '✦ タグを自動生成'}
-          </button>
         </div>
       )}
 
       {showInfo && (
-        <div className="reader-info">
-          <div className="reader-info-head">
-            <span className="reader-info-title">あらすじ（AI 解析）</span>
-            <button className="btn" onClick={runAnalyze} disabled={analyzing}>
-              {analyzing
-                ? queued
-                  ? '待機中…'
-                  : `解析中… ${progressPct}%`
-                : `ランダムに解析（${settings.llm.samplePages}p）`}
-            </button>
-            <button className="btn" onClick={analyzeAll} disabled={analyzing}>
-              すべて再解析
-            </button>
-            <button
-              className="btn"
-              onClick={regenerateSummary}
-              disabled={analyzing || analyzedCount === 0}
-              title="ページ解析済みの内容からあらすじだけを作り直します"
-            >
-              あらすじ再生成
-            </button>
-            {analyzing && (
-              <button className="btn" onClick={cancelAnalyze}>
-                中止
-              </button>
-            )}
-            <button
-              className={`btn ${showPageInfo ? 'btn-active' : ''}`}
-              onClick={() => onShowPageInfoChange(!showPageInfo)}
-              title="現在ページの解析結果を下部に表示"
-            >
-              ページ解析を表示
-            </button>
-            <span className="reader-info-note">解析済み {analyzedCount}/{count} ページ</span>
-          </div>
-          {analyzing && (
-            <div className="analyze-progress">
-              <div className="analyze-bar">
-                <div className="analyze-bar-fill" style={{ width: `${progressPct}%` }} />
-              </div>
-              <span className="analyze-progress-label">
-                {queued
-                  ? '順番待ち…'
-                  : progress
-                    ? progress.phase === 'summary'
-                      ? `あらすじ生成中… ・ 経過 ${elapsedLabel}`
-                      : `ページ解析中 ${progress.current}/${progress.total - 1} ・ 経過 ${elapsedLabel}`
-                    : '準備中…'}
-              </span>
-            </div>
-          )}
-          {analyzeError && <div className="reader-info-error">エラー: {analyzeError}</div>}
-          <div className="reader-info-body">
-            {summary ? summary : <span className="reader-info-empty">まだ解析していません。</span>}
-          </div>
-        </div>
+        <TocPanel
+          root={root}
+          work={work}
+          currentPage={currentSpread[0]}
+          llmReady={llmReady}
+          onJump={jumpTo}
+        />
       )}
 
       <div
@@ -882,43 +633,6 @@ export function Reader({
           visible={scrubberVisible}
           onSeek={(p) => setPage(p)}
         />
-        {showPageInfo && viewMode === 'image' && (
-          <div className="reader-pageinfo">
-            {order.map((p) => {
-              const info = pageInfos[p]
-              return (
-                <div key={p} className="pageinfo-item">
-                  <div className="pageinfo-head">
-                    <span className="pageinfo-page">p.{p + 1}</span>
-                    {info === undefined ? (
-                      <span className="pageinfo-empty">読み込み中…</span>
-                    ) : (
-                      <button
-                        className="btn pageinfo-btn"
-                        onClick={() => analyzeThisPage(p)}
-                        disabled={analyzing}
-                      >
-                        {info === null ? 'このページを解析' : '再解析'}
-                      </button>
-                    )}
-                  </div>
-                  {info && (
-                    <div className="pageinfo-body">
-                      {info.description && info.description.trim() ? (
-                        info.description
-                      ) : (
-                        <span className="pageinfo-empty">（説明なし・再解析できます）</span>
-                      )}
-                      {info.text && info.text.trim() && (
-                        <div className="pageinfo-text">{info.text}</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {showBookmarks && (

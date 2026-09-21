@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__, llm_server
-from .routers import analysis, health, library, pages, roots, text, works
+from .routers import analysis, health, library, pages, roots, structure, text, works
 
 app = FastAPI(title="Book Viewer Backend", version=__version__)
 
@@ -30,4 +30,5 @@ app.include_router(library.router, prefix="/api")
 app.include_router(works.router, prefix="/api")
 app.include_router(pages.router, prefix="/api")
 app.include_router(text.router, prefix="/api")
+app.include_router(structure.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")

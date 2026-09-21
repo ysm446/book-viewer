@@ -98,6 +98,7 @@ class _State:
     proc: subprocess.Popen | None = None
     model_name: str | None = None
     base_url: str | None = None
+    ctx_size: int | None = None  # 起動時のコンテキスト長(本文をどれだけ一度に渡せるかの目安)
     log = None  # type: ignore[assignment]
 
 
@@ -116,7 +117,12 @@ def status() -> dict:
             _state.proc = None
             _state.model_name = None
             _state.base_url = None
-        return {"running": running, "model": _state.model_name, "base_url": _state.base_url}
+        return {
+            "running": running,
+            "model": _state.model_name,
+            "base_url": _state.base_url,
+            "ctx_size": _state.ctx_size if running else None,
+        }
 
 
 def _parse_host_port(base_url: str) -> tuple[str, int]:
@@ -187,6 +193,7 @@ def load(
             raise
         _state.model_name = Path(model_path).stem
         _state.base_url = base_url
+        _state.ctx_size = ctx_size
 
         deadline = time.time() + timeout
         while time.time() < deadline:

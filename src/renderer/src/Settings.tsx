@@ -29,11 +29,6 @@ function ctxIndex(n: number): number {
   return best
 }
 
-// main/settings.ts の DEFAULT_SYSTEM_PROMPT と一致させること。
-const DEFAULT_SYSTEM_PROMPT =
-  'あなたは漫画の内容を客観的に説明するアシスタントです。' +
-  '推測は控えめにし、画像に実際に見えたものを日本語で簡潔に記述してください。'
-
 // main/settings.ts の DEFAULT_CHAT_SYSTEM_PROMPT と一致させること。
 const DEFAULT_CHAT_SYSTEM_PROMPT =
   'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
@@ -72,7 +67,7 @@ type SettingsTab = 'display' | 'runtime' | 'ai' | 'chat'
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'display', label: '表示' },
   { id: 'runtime', label: 'ランタイム' },
-  { id: 'ai', label: 'AI 解析' },
+  { id: 'ai', label: '文字起こし' },
   { id: 'chat', label: 'チャット' }
 ]
 
@@ -535,162 +530,6 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                 ))}
               </div>
             </div>
-          </section>
-
-          <section className="settings-section">
-            <h3 className="settings-section-title">AI 解析（ローカル LLM）</h3>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                解析する代表ページ数
-                <span className="settings-desc">多いほど精度↑だが時間↑（既定 10）</span>
-              </div>
-              <input
-                className="tag-input settings-num"
-                type="number"
-                min={1}
-                max={60}
-                value={settings.llm.samplePages}
-                onChange={(e) =>
-                  onChange({
-                    llm: { ...settings.llm, samplePages: Math.max(1, Number(e.target.value) || 1) }
-                  })
-                }
-              />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                システムプロンプトを使う
-                <span className="settings-desc">
-                  ページ解析時に前置きする指示。オフなら現状どおり（指示文のみ）
-                </span>
-              </div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={settings.llm.systemPromptEnabled}
-                  onChange={(e) =>
-                    onChange({ llm: { ...settings.llm, systemPromptEnabled: e.target.checked } })
-                  }
-                />
-                <span className="switch-track" />
-              </label>
-            </div>
-
-            {settings.llm.systemPromptEnabled && (
-              <div className="settings-row settings-row-col">
-                <div className="syslabel-row">
-                  <span className="settings-label-text">システムプロンプト</span>
-                  <button
-                    className="icon-btn syslabel-reset"
-                    title="既定に戻す"
-                    onClick={() =>
-                      onChange({ llm: { ...settings.llm, systemPrompt: DEFAULT_SYSTEM_PROMPT } })
-                    }
-                  >
-                    <ResetIcon />
-                  </button>
-                </div>
-                <textarea
-                  className="system-prompt"
-                  rows={4}
-                  value={settings.llm.systemPrompt}
-                  onChange={(e) =>
-                    onChange({ llm: { ...settings.llm, systemPrompt: e.target.value } })
-                  }
-                />
-              </div>
-            )}
-
-            <div className="settings-row">
-              <div className="settings-label">
-                前ページの文脈を参照
-                <span className="settings-desc">
-                  直前ページの説明を文脈に添えて精度を上げる（順次解析で有効。コスト増は小）
-                </span>
-              </div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={settings.llm.usePageContext}
-                  onChange={(e) =>
-                    onChange({ llm: { ...settings.llm, usePageContext: e.target.checked } })
-                  }
-                />
-                <span className="switch-track" />
-              </label>
-            </div>
-
-            {settings.llm.usePageContext && (
-              <div className="settings-row">
-                <div className="settings-label">
-                  参照する直前ページ数
-                  <span className="settings-desc">既定 2</span>
-                </div>
-                <input
-                  className="tag-input settings-num"
-                  type="number"
-                  min={1}
-                  max={8}
-                  value={settings.llm.pageContextCount}
-                  onChange={(e) =>
-                    onChange({
-                      llm: {
-                        ...settings.llm,
-                        pageContextCount: Math.max(1, Number(e.target.value) || 1)
-                      }
-                    })
-                  }
-                />
-              </div>
-            )}
-
-            <div className="settings-row">
-              <div className="settings-label">
-                物語のまとめを文脈に使う
-                <span className="settings-desc">
-                  あらすじ・登場人物・伏線を「物語の状態」として蓄積し、各ページ解析に前置きする。
-                  作品全体を俯瞰でき精度↑（直前ページ参照より賢い。まとめ更新のぶん時間は増える）
-                </span>
-              </div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={settings.llm.useStorySummary}
-                  onChange={(e) =>
-                    onChange({ llm: { ...settings.llm, useStorySummary: e.target.checked } })
-                  }
-                />
-                <span className="switch-track" />
-              </label>
-            </div>
-
-            {settings.llm.useStorySummary && (
-              <div className="settings-row">
-                <div className="settings-label">
-                  まとめの更新間隔（ページ）
-                  <span className="settings-desc">
-                    Mページごとにまとめを走行更新する。小さいほど精度↑・時間↑（既定 5）
-                  </span>
-                </div>
-                <input
-                  className="tag-input settings-num"
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={settings.llm.storySummaryEvery}
-                  onChange={(e) =>
-                    onChange({
-                      llm: {
-                        ...settings.llm,
-                        storySummaryEvery: Math.max(1, Number(e.target.value) || 1)
-                      }
-                    })
-                  }
-                />
-              </div>
-            )}
           </section>
               </>
             )}

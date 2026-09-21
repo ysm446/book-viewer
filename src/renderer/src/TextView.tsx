@@ -179,6 +179,24 @@ export function TextView({ root, work, pages, vertical, engine }: Props): JSX.El
           )
         )}
         <span className="text-toolbar-spacer" />
+        {doneCount > 0 && (
+          <button
+            className="btn"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `全 ${work.page_count} ページを文字起こしし直します。手で直した本文があれば上書きされます。よろしいですか？`
+                )
+              ) {
+                void transcribe(undefined, true)
+              }
+            }}
+            disabled={!!job}
+            title="文字起こしの改良を反映させたいときに、すべてのページを作り直します"
+          >
+            全ページやり直す
+          </button>
+        )}
         <button
           className="btn"
           onClick={() => void transcribe(pages, true)}

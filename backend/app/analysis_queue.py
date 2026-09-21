@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import analysis as analysis_mod
 from . import llm_server
+from . import structure as structure_mod
 from . import transcribe as transcribe_mod
 from .db import connect
 
@@ -62,7 +63,11 @@ def enqueue(
     force: bool = False,
     engine: str = "yomitoku",
 ) -> dict:
-    """ジョブを積む。kind="transcribe" は文字起こし(pages 省略時は未処理の全ページ)。"""
+    """ジョブを積む。
+
+    kind="transcribe" は文字起こし(pages 省略時は未処理の全ページ、force で作り直し)。
+    kind="structure" は章立てと要約(force で章立てから作り直し)。
+    """
     with _cond:
         known = {j["work_id"] for j in _pending}
         if _current:
@@ -171,6 +176,17 @@ def _worker() -> None:
                     job.get("pages"),
                     engine=job.get("engine", "yomitoku"),
                     force=job.get("force", False),
+                    cancel_check=lambda: job["work_id"] in _cancel_ids,
+                )
+            elif job.get("kind") == "structure":
+                if not base_url:
+                    raise RuntimeError("モデルが読み込まれていません。")
+                structure_mod.run(
+                    root,
+                    job["work_id"],
+                    base_url,
+                    redo=job.get("force", False),
+                    ctx_size=st.get("ctx_size"),
                     cancel_check=lambda: job["work_id"] in _cancel_ids,
                 )
             else:

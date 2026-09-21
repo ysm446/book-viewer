@@ -309,7 +309,7 @@ export interface AnalysisProgress {
 }
 
 /** キューのジョブ種別(解析 / 文字起こし)。 */
-export type JobKind = 'analyze' | 'transcribe'
+export type JobKind = 'analyze' | 'transcribe' | 'structure'
 
 export interface QueueCurrent {
   work_id: string
@@ -408,6 +408,42 @@ export async function enqueueTranscribe(
       force: opts?.force ?? false,
       engine: opts?.engine ?? 'yomitoku'
     })
+  })
+}
+
+/** 章(目次の 1 項目)。start / end は 0 始まりで end を含む。 */
+export interface Chapter {
+  title: string
+  start: number
+  end: number
+  sections: { title: string; page: number }[]
+  /** 章の要約(Markdown)。まだ無ければ null */
+  summary: string | null
+}
+
+export interface BookStructure {
+  chapters: Chapter[]
+  /** 本全体の要約(先の内容を含む)。まだ無ければ null */
+  book_summary: string | null
+  /** 文字起こし済みのページ数 */
+  transcribed: number
+  page_count: number
+}
+
+/** 章立てと要約を取得する。 */
+export async function getStructure(root: string, workId: string): Promise<BookStructure> {
+  return jsonFetch(`/works/${workId}/structure?root=${encodeURIComponent(root)}`)
+}
+
+/** 章立てと要約の作成をキューに積む(redo で章立てから作り直す)。 */
+export async function enqueueStructure(
+  root: string,
+  workId: string,
+  redo = false
+): Promise<AnalysisQueue> {
+  return jsonFetch(`/works/${workId}/structure`, {
+    method: 'POST',
+    body: JSON.stringify({ root, redo })
   })
 }
 
