@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import __version__, llm_server
+from . import __version__, embedding, llm_server
 from .routers import analysis, health, library, pages, roots, structure, text, works
 
 app = FastAPI(title="Book Viewer Backend", version=__version__)
@@ -13,8 +13,9 @@ app = FastAPI(title="Book Viewer Backend", version=__version__)
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
-    # バックエンド終了時に llama-server も止める。
+    # バックエンド終了時に llama-server(会話用・埋め込み用)も止める。
     llm_server.stop()
+    embedding.stop()
 
 # ローカルデスクトップアプリ用途のため、localhost からのアクセスを広く許可する。
 app.add_middleware(

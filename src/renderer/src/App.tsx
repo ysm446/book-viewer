@@ -1203,7 +1203,9 @@ export function App(): JSX.Element {
                     ? '文字起こし: '
                     : queue.current.kind === 'structure'
                       ? '章立て・要約: '
-                      : ''}
+                      : queue.current.kind === 'index'
+                        ? '検索の索引: '
+                        : ''}
                   {queue.current.title}
                 </span>
                 <span className="sbq-bar">

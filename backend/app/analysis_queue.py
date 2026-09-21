@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from . import analysis as analysis_mod
+from . import embedding as embedding_mod
 from . import llm_server
 from . import structure as structure_mod
 from . import transcribe as transcribe_mod
@@ -62,11 +63,13 @@ def enqueue(
     kind: str = "analyze",
     force: bool = False,
     engine: str = "yomitoku",
+    extra: dict | None = None,
 ) -> dict:
     """ジョブを積む。
 
     kind="transcribe" は文字起こし(pages 省略時は未処理の全ページ、force で作り直し)。
     kind="structure" は章立てと要約(force で章立てから作り直し)。
+    kind="index" は本文検索の索引(extra に server_path / models_dir)。
     """
     with _cond:
         known = {j["work_id"] for j in _pending}
@@ -96,6 +99,7 @@ def enqueue(
                     "kind": kind,
                     "force": force,
                     "engine": engine,
+                    "extra": extra or {},
                 }
             )
             known.add(wid)
@@ -176,6 +180,15 @@ def _worker() -> None:
                     job.get("pages"),
                     engine=job.get("engine", "yomitoku"),
                     force=job.get("force", False),
+                    cancel_check=lambda: job["work_id"] in _cancel_ids,
+                )
+            elif job.get("kind") == "index":
+                extra = job.get("extra") or {}
+                embedding_mod.build_index(
+                    root,
+                    job["work_id"],
+                    extra.get("server_path"),
+                    extra.get("models_dir"),
                     cancel_check=lambda: job["work_id"] in _cancel_ids,
                 )
             elif job.get("kind") == "structure":

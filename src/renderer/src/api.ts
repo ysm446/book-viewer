@@ -309,7 +309,7 @@ export interface AnalysisProgress {
 }
 
 /** キューのジョブ種別(解析 / 文字起こし)。 */
-export type JobKind = 'analyze' | 'transcribe' | 'structure'
+export type JobKind = 'analyze' | 'transcribe' | 'structure' | 'index'
 
 export interface QueueCurrent {
   work_id: string
@@ -476,6 +476,39 @@ export async function getStructure(root: string, workId: string): Promise<BookSt
   return jsonFetch(`/works/${workId}/structure?root=${encodeURIComponent(root)}`)
 }
 
+/** 本文検索の索引の状態。 */
+export interface IndexStatus {
+  /** 索引のまとまりの数(0 なら索引なし) */
+  chunks: number
+  /** 索引を作ったあとで本文が変わった */
+  stale: boolean
+  /** モデル置き場で見つかった埋め込みモデル(無ければ null) */
+  embedding_model: string | null
+}
+
+export async function getIndexStatus(
+  root: string,
+  workId: string,
+  modelsDir: string
+): Promise<IndexStatus> {
+  return jsonFetch(
+    `/works/${workId}/index?root=${encodeURIComponent(root)}&models_dir=${encodeURIComponent(modelsDir)}`
+  )
+}
+
+/** 本文検索の索引づくりをキューに積む。 */
+export async function enqueueIndex(
+  root: string,
+  workId: string,
+  serverPath: string,
+  modelsDir: string
+): Promise<AnalysisQueue> {
+  return jsonFetch(`/works/${workId}/index`, {
+    method: 'POST',
+    body: JSON.stringify({ root, server_path: serverPath, models_dir: modelsDir })
+  })
+}
+
 /** 手で直した章立てを保存する。範囲が変わった章の要約は消える。 */
 export async function saveChapters(
   root: string,
@@ -520,6 +553,8 @@ interface ChatOpts {
   think?: boolean
   /** 本文を渡す上限(文字数)。省略時は backend の既定 */
   contextChars?: number
+  /** 本文検索を使う(埋め込み用の llama-server を起動するための情報)。省略時は検索しない */
+  search?: { serverPath: string; modelsDir: string }
 }
 
 function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
@@ -532,6 +567,9 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
     page_focus: opts?.pageFocus ?? false,
     system_prompt: opts?.systemPrompt ?? null,
     context_chars: opts?.contextChars ?? null,
+    search: opts?.search
+      ? { server_path: opts.search.serverPath, models_dir: opts.search.modelsDir }
+      : null,
     think: opts?.think ?? false
   })
 }

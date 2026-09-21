@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import analysis_queue, structure, transcribe
+from .. import analysis_queue, embedding, structure, transcribe
 from ..resolve import get_root
 
 router = APIRouter(prefix="/works")
@@ -48,3 +48,30 @@ def save_chapters(work_id: str, body: ChaptersUpdate) -> dict:
         return structure.save_chapters(r, work_id, [c.model_dump() for c in body.chapters])
     except (transcribe.TranscribeError, structure.StructureError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{work_id}/index")
+def index_status(work_id: str, root: str, models_dir: str = "") -> dict:
+    """本文検索の索引の状態と、使える埋め込みモデル。"""
+    r = get_root(root)
+    model = embedding.find_model(models_dir)
+    return {**embedding.status(r, work_id), "embedding_model": model.stem if model else None}
+
+
+class IndexRequest(BaseModel):
+    root: str
+    server_path: str = ""
+    models_dir: str = ""
+
+
+@router.post("/{work_id}/index")
+def enqueue_index(work_id: str, body: IndexRequest) -> dict:
+    """本文検索の索引づくりを解析キューに積む(埋め込み用の llama-server を別に起動する)。"""
+    get_root(body.root)
+    return analysis_queue.enqueue(
+        body.root,
+        [work_id],
+        0,
+        kind="index",
+        extra={"server_path": body.server_path, "models_dir": body.models_dir},
+    )

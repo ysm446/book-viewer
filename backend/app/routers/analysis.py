@@ -82,6 +82,8 @@ class ChatRequest(BaseModel):
     think: bool = False
     # 本文を渡す上限(文字数)。None なら既定(analysis.CHAT_CONTEXT_CHARS)。
     context_chars: int | None = None
+    # 本文検索を使うときの {server_path, models_dir}(埋め込み用の llama-server の起動に使う)。
+    search: dict | None = None
 
 
 def _chat_setup(work_id: str, body: ChatRequest):
@@ -121,6 +123,7 @@ def work_chat(work_id: str, body: ChatRequest) -> dict:
             system_prompt=body.system_prompt,
             think=body.think,
             context_chars=body.context_chars,
+            search_opts=body.search,
         )
     except llm.LlmError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -147,6 +150,7 @@ def work_chat_stream(work_id: str, body: ChatRequest) -> StreamingResponse:
                 system_prompt=body.system_prompt,
                 think=body.think,
                 context_chars=body.context_chars,
+                search_opts=body.search,
             ):
                 yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
         except llm.LlmError as e:

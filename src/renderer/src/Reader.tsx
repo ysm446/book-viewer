@@ -691,6 +691,8 @@ export function Reader({
             work={work}
             currentPage={currentSpread[currentSpread.length - 1]}
             contextChars={chatContextChars(settings.llm.ctxSize)}
+            serverPath={settings.llm.serverPath}
+            modelsDir={settings.llm.modelsDir}
             think={settings.llm.thinkingEnabled}
             systemPrompt={settings.llm.chatSystemPrompt}
             dynamicSuggestions={settings.llm.chatDynamicSuggestions}

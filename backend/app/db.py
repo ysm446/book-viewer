@@ -63,6 +63,24 @@ CREATE TABLE IF NOT EXISTS analysis (
     created_at  TEXT
 );
 
+-- 本文検索の索引(本文を数百字ずつに分けたまとまりと、その埋め込みベクトル)
+CREATE TABLE IF NOT EXISTS chunks (
+    work_id   TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    seq       INTEGER NOT NULL,
+    page      INTEGER NOT NULL,   -- まとまりのページ(0 始まり)
+    text      TEXT NOT NULL,
+    embedding BLOB,               -- float32 の並び(正規化済み)
+    PRIMARY KEY (work_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS chunk_index (
+    work_id     TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+    signature   TEXT NOT NULL,    -- 索引を作ったときの本文の指紋(変わったら作り直す)
+    model       TEXT,
+    chunk_count INTEGER NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS page_analysis (
     work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
     page         INTEGER NOT NULL,

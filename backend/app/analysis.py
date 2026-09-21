@@ -684,12 +684,18 @@ CHAT_CONTEXT_CHARS = 12000
 _IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _RT_RE = re.compile(r"<rt>.*?</rt>")
 _TAG_RE = re.compile(r"</?ruby>")
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
 
 
 def _plain_for_llm(markdown: str) -> str:
-    """本文の Markdown を LLM に渡す形にする(図は [図: キャプション]、ルビは落とす)。"""
+    """本文の Markdown を LLM に渡す形にする。
+
+    図は [図: キャプション]、ルビは落とす。本文中の見出し(## …)は【…】にする
+    (system 側の「## 本文」などの区切りと紛れないように)。
+    """
     text = _IMAGE_REF_RE.sub(lambda m: f"[図: {m.group(1)}]" if m.group(1) else "[図]", markdown)
     text = _RT_RE.sub("", text)
+    text = _HEADING_RE.sub(lambda m: f"【{m.group(1).strip()}】", text)
     return _TAG_RE.sub("", text).strip()
 
 
@@ -753,6 +759,52 @@ def _read_chapters(
     return picked, current
 
 
+def _search_context(
+    root: Path,
+    work_id: str,
+    messages: list[dict],
+    current_page: int | None,
+    search_opts: dict | None,
+    budget: int,
+    exclude_pages: set[int],
+) -> list[str]:
+    """最後の質問に近い本文のまとまりを、読んだ範囲(今のページまで)から探して並べる。
+
+    今のページ付近として別に渡すページ(exclude_pages)は除く。索引が無い・検索に失敗した
+    ときは空(会話は続ける)。
+    """
+    if search_opts is None or budget <= 0:
+        return []
+    question = next(
+        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
+    )
+    if not question.strip():
+        return []
+    from . import embedding  # embedding が analysis を import するため、ここで読む
+
+    try:
+        hits = embedding.search(
+            root,
+            work_id,
+            question,
+            search_opts.get("server_path"),
+            search_opts.get("models_dir"),
+            max_page=current_page,
+            exclude_pages=exclude_pages,
+        )
+    except Exception:  # noqa: BLE001 - 検索は補助なので、失敗しても会話は止めない
+        return []
+    out: list[str] = []
+    used = 0
+    for h in hits:
+        text = f"--- p.{h['page'] + 1} ---\n{h['text']}"
+        if out and used + len(text) > budget:
+            break
+        out.append(text)
+        used += len(text)
+    return out
+
+
 def _book_info(root: Path, work_id: str) -> list[str]:
     with connect(root) as conn:
         row = conn.execute(
@@ -804,6 +856,7 @@ def _build_chat_messages(
     page_focus: bool = False,
     system_prompt: str | None = None,
     context_chars: int | None = None,
+    search_opts: dict | None = None,
 ) -> list[dict]:
     """本の情報と本文(読んだ範囲)を system に、会話履歴を並べた LLM メッセージ列を組む。
 
@@ -811,6 +864,8 @@ def _build_chat_messages(
     - page_focus=True: 本文を踏まえつつ、現在ページの内容を中心に答えさせる。
     - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える(Vision モデルのみ)。
     - context_chars: 本文を渡す上限(文字数)。None なら CHAT_CONTEXT_CHARS。
+    - search_opts: {server_path, models_dir}。本文検索の索引があれば、質問に近い本文を
+      読んだ範囲から探して加える(予算の 1/4 まで)。無ければ検索しない。
     """
     focus = (system_prompt or "").strip() or _CHAT_SYSTEM
     sections = ["## 本の情報", *_book_info(root, work_id)]
@@ -825,7 +880,15 @@ def _build_chat_messages(
     if summaries:
         sections += ["", "## 読み終えた章の要約", *summaries]
         budget -= sum(len(t) for t in summaries)
-    body, first, last = _reading_context(root, work_id, current_page, budget)
+    # 質問に近い本文(検索)の分を先に取り分けておく。
+    search_budget = budget // 4 if search_opts is not None else 0
+    body, first, last = _reading_context(root, work_id, current_page, budget - search_budget)
+    found = _search_context(
+        root, work_id, messages, current_page, search_opts, search_budget,
+        set(range(first, last + 1)) if body else set(),
+    )
+    if found:
+        sections += ["", "## 質問に関係しそうな本文(読んだ範囲から検索。ページ順ではない)", *found]
     if body:
         note = f"p.{first + 1}〜p.{last + 1}"
         if first > 0:
@@ -878,6 +941,7 @@ def chat_about_work(
     model: str = "local",
     think: bool | None = None,
     context_chars: int | None = None,
+    search_opts: dict | None = None,
 ) -> str:
     """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。"""
     llm_messages = _build_chat_messages(
@@ -890,6 +954,7 @@ def chat_about_work(
         page_focus,
         system_prompt,
         context_chars,
+        search_opts,
     )
     return llm.chat(base_url, llm_messages, model=model, think=think)
 
@@ -907,6 +972,7 @@ def chat_about_work_stream(
     model: str = "local",
     think: bool | None = None,
     context_chars: int | None = None,
+    search_opts: dict | None = None,
 ):
     """chat_about_work のストリーム版。差分 dict を順に yield する。"""
     llm_messages = _build_chat_messages(
@@ -919,6 +985,7 @@ def chat_about_work_stream(
         page_focus,
         system_prompt,
         context_chars,
+        search_opts,
     )
     yield from llm.chat_stream(base_url, llm_messages, model=model, think=think)
 

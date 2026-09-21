@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { chatAboutWorkStream, suggestChatQuestions, type ChatTurn, type Work } from './api'
+import {
+  chatAboutWorkStream,
+  enqueueIndex,
+  getAnalysisQueue,
+  getIndexStatus,
+  suggestChatQuestions,
+  type ChatTurn,
+  type IndexStatus,
+  type Work
+} from './api'
 import { Markdown } from './Markdown'
 
 interface ReaderChatProps {
@@ -9,6 +18,9 @@ interface ReaderChatProps {
   currentPage: number
   /** 本文を渡す上限(文字数)。コンテキスト長の設定から決める。 */
   contextChars: number
+  /** 埋め込み用の llama-server を起動するための設定(本文検索に使う) */
+  serverPath: string
+  modelsDir: string
   /** 思考(reasoning)モード。設定から渡す。 */
   think: boolean
   /** チャットのシステムプロンプト(設定から差し替え可能)。 */
@@ -41,6 +53,8 @@ export function ReaderChat({
   work,
   currentPage,
   contextChars,
+  serverPath,
+  modelsDir,
   think,
   systemPrompt,
   dynamicSuggestions,
@@ -53,6 +67,10 @@ export function ReaderChat({
   const [error, setError] = useState<string | null>(null)
   const [includeImage, setIncludeImage] = useState(false)
   const [pageFocus, setPageFocus] = useState(false)
+  // 本文検索(索引があるときだけ使える)
+  const [useSearch, setUseSearch] = useState(true)
+  const [index, setIndex] = useState<IndexStatus | null>(null)
+  const [indexJob, setIndexJob] = useState<{ current: number; total: number } | null>(null)
   // 内容から作られた質問。取れなければ空のまま(固定の候補だけになる)。
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   // 固定の候補は窓を切って出し、⟳ で次の並びへ送る(ランダムではなく決まった順)。
@@ -134,6 +152,51 @@ export function ReaderChat({
     if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages, busy, chipsKey])
 
+  // 索引の状態を今すぐ取り直す(作成開始の直後に使う)。
+  const refreshIndexRef = useRef<() => void>(() => {})
+  // 本文検索の索引の状態を取る。作成中なら進み具合を追い、終わったら取り直す。
+  useEffect(() => {
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const refresh = async (): Promise<void> => {
+      try {
+        const [st, q] = await Promise.all([
+          getIndexStatus(root, work.id, modelsDir),
+          getAnalysisQueue()
+        ])
+        if (!alive) return
+        setIndex(st)
+        const cur = q.current?.work_id === work.id && q.current.kind === 'index' ? q.current : null
+        const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'index')
+        setIndexJob(cur ? { current: cur.current, total: cur.total } : pending ? { current: 0, total: 0 } : null)
+        if (cur || pending) timer = setTimeout(() => void refresh(), 1500)
+      } catch {
+        /* 索引は付加機能なので、取れなくても会話はできる */
+      }
+    }
+    void refresh()
+    refreshIndexRef.current = () => {
+      if (timer) clearTimeout(timer)
+      void refresh()
+    }
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [root, work.id, modelsDir])
+
+  async function buildIndex(): Promise<void> {
+    try {
+      await enqueueIndex(root, work.id, serverPath, modelsDir)
+      setIndexJob({ current: 0, total: 0 })
+      refreshIndexRef.current()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  const searchReady = !!index && index.chunks > 0
+
   function clearChat(): void {
     if (busy) return
     setMessages([])
@@ -166,7 +229,15 @@ export function ReaderChat({
         root,
         work.id,
         base,
-        { currentPage, includeImage, pageFocus, systemPrompt, think, contextChars },
+        {
+          currentPage,
+          includeImage,
+          pageFocus,
+          systemPrompt,
+          think,
+          contextChars,
+          search: useSearch && searchReady ? { serverPath, modelsDir } : undefined
+        },
         {
           onReasoning: (t) => {
             reasoning += t
@@ -296,7 +367,47 @@ export function ReaderChat({
           />
           画像
         </label>
+        {searchReady && !indexJob && (
+          <label
+            className="chat-opt"
+            title={`読んだ範囲の本文から、質問に関係しそうな箇所を探して答えに使います（${index?.chunks} 件）`}
+          >
+            <input
+              type="checkbox"
+              checked={useSearch}
+              onChange={(e) => setUseSearch(e.target.checked)}
+            />
+            本文を検索
+          </label>
+        )}
       </div>
+      {index && (indexJob || !searchReady || index.stale) && (
+        <div className="chat-index">
+          {indexJob ? (
+            <span>
+              本文検索の索引を作成中
+              {indexJob.total > 0 ? ` ${indexJob.current}/${indexJob.total}` : '（順番待ち）'}
+            </span>
+          ) : !index.embedding_model ? (
+            <span>本文検索には埋め込みモデル（例: Qwen3-Embedding）をモデル置き場に置いてください</span>
+          ) : (
+            <>
+              <span>
+                {index.stale
+                  ? '本文が変わりました。本文検索の索引を作り直すと反映されます'
+                  : '本文検索の索引を作ると、遠いページの内容も答えに使えます'}
+              </span>
+              <button
+                className="btn chat-index-btn"
+                onClick={() => void buildIndex()}
+                title={`埋め込みモデル ${index.embedding_model} で索引を作ります`}
+              >
+                {index.stale ? '作り直す' : '索引を作る'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="reader-chat-input">
         <textarea

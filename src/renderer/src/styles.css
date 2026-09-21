@@ -1157,6 +1157,26 @@ input[type='checkbox']:focus-visible {
   outline: none;
 }
 
+/* チャットの本文検索(索引の状態と作成ボタン) */
+.chat-index {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
+}
+.chat-index span {
+  flex: 1;
+}
+.chat-index-btn {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 /* ---- テキスト表示(リーダー) ---- */
 .text-view {
   align-self: stretch;

@@ -47,7 +47,8 @@ def scan_models(models_dir: Path | None = None) -> list[dict]:
         return []
     out: list[dict] = []
     for gguf in sorted(d.rglob("*.gguf")):
-        if "mmproj" in gguf.name.lower():
+        # mmproj(画像入力用の付属)と埋め込みモデル(本文検索用。embedding.py が使う)は会話に使えない。
+        if "mmproj" in gguf.name.lower() or "embed" in gguf.name.lower():
             continue
         mmproj = None
         for cand in gguf.parent.glob("*.gguf"):
