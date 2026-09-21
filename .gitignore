@@ -1,0 +1,52 @@
+# --- 依存パッケージ ---
+node_modules/
+.venv/
+venv/
+
+# --- ビルド成果物 ---
+# out: electron-vite の出力 / release: electron-builder の配布物（将来用）
+out/
+dist/
+build/
+release/
+
+# --- Python キャッシュ ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- モデル重み・外部バイナリ・実行時生成物（サイズ大・環境依存） ---
+# models: GGUF / vendor: llama.cpp 等のバイナリ / data: 実行時生成データ
+models/
+vendor/
+data/
+
+# --- テスト用の蔵書データ ---
+.book-viewer/
+.manga-viewer/
+
+# --- 環境変数・秘密情報 ---
+.env
+.env.*
+!.env.example
+
+# --- ログ ---
+*.log
+logs/
+npm-debug.log*
+
+# --- IDE / エディタ設定 ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Claude Code 設定（許可リスト等が自動追記され差分ノイズになるため無視） ---
+.claude/settings.json
+.claude/settings.local.json
+
+# --- OS 生成ファイル ---
+.DS_Store
+Thumbs.db
+desktop.ini
