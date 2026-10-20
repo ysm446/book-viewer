@@ -1,0 +1,5 @@
+生成方法: image_gen 組み込みツール
+用途: book-viewer のアプリアイコン素材
+モチーフ: 開いた本としおり。落ち着いたダークテーマに合わせたグレーと紙色。
+
+Use case: logo-brand. Create one polished desktop app icon for book-viewer, a quiet local book reader with OCR, structured text and book chat. Square 1024x1024 composition, transparent outside a dark charcoal rounded-square tile. A large centered open book, ivory/light gray pages, dark central gutter, a single integrated charcoal ribbon bookmark on the right page. Broad beautiful gently curved page silhouettes, restrained layered page edges, nearly frontal view, subtle tactile depth with matte surfaces. Palette based on #242425, #353538, #d4d4d8, #a1a1a6. Refined calm native desktop aesthetic; strong recognizability at 32px. Book fills about 70 percent of tile width. Clean silhouette, optically balanced. No text, letters, tiny text lines, sparkles, robots, circuits, clouds, neon, dramatic gradients, heavy shadows, mockup scene, or extra icons. Deliver only a single finished icon with genuine transparent outer corners.

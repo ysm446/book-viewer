@@ -5,6 +5,7 @@ import { exec } from 'child_process'
 import { BackendProcess } from './backend'
 import { captureWindow, savePages, type SavePageInput } from './screenshot'
 import { getSettings, setSettings, type AppSettingsPatch } from './settings'
+import appIcon from '../../resources/book-viewer-icon.png?asset'
 
 const backend = new BackendProcess()
 let mainWindow: BrowserWindow | null = null
@@ -118,6 +119,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: 'Book Viewer',
+    icon: appIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
