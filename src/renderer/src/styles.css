@@ -2719,12 +2719,11 @@ input[type='checkbox']:focus-visible {
 .toast-msg {
   font-size: 12px;
 }
+/* 保存先のフルパス。長いパスも省略せず折り返して見せる。 */
 .toast-file {
   font-size: 11px;
   color: var(--text-sub);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .toast-hint {
   font-size: 11px;

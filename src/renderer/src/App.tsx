@@ -143,30 +143,41 @@ export function App(): JSX.Element {
   // ファイルをウィンドウへドラッグ中か(取り込み案内の表示)。
   const [dropActive, setDropActive] = useState(false)
 
-  // F12: ウィンドウのコンテンツ領域をキャプチャして <管理ルート>/screenshot/ に保存する。
-  const captureWindow = useCallback(async (): Promise<void> => {
-    if (!root) {
-      notify('先に管理ルートを選択してください', null, true)
-      return
-    }
-    // 直前の通知が写り込まないよう、消してから描画を 1 フレーム待つ。
-    setToast(null)
-    await new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))
-    )
-    try {
-      const path = await window.api.captureWindow(root, current?.title ?? 'library')
-      notify('ウィンドウを保存しました', path)
-    } catch (e) {
-      notify(`保存に失敗しました: ${(e as Error).message}`, null, true)
-    }
-  }, [root, current, notify])
+  // F12 / Shift+F12: ウィンドウのコンテンツ領域をキャプチャして <管理ルート>/screenshot/ に保存する。
+  // F12 は画面の実ピクセルのまま、Shift+F12 は表示スケール前の論理サイズ(100% 相当)。
+  // 撮影中(描画待ち〜保存完了)は次の撮影を受け付けない。
+  const capturingRef = useRef(false)
+  const captureWindow = useCallback(
+    async (logical: boolean): Promise<void> => {
+      if (capturingRef.current) return
+      if (!root) {
+        notify('先に管理ルートを選択してください', null, true)
+        return
+      }
+      capturingRef.current = true
+      try {
+        // 直前の通知が写り込まないよう、消してから描画を 1 フレーム待つ。
+        setToast(null)
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))
+        )
+        const path = await window.api.captureWindow(root, logical)
+        notify(logical ? 'ウィンドウを保存しました（100% 相当のサイズ）' : 'ウィンドウを保存しました', path)
+      } catch (e) {
+        notify(`保存に失敗しました: ${(e as Error).message}`, null, true)
+      } finally {
+        capturingRef.current = false
+      }
+    },
+    [root, notify]
+  )
 
-  // main が横取りした F9 / F12 の通知。F9(ページ画像の保存)は Reader 側で処理するため、
+  // main が横取りした F9 / F12 / Shift+F12 の通知。F9(ページ画像の保存)は Reader 側で処理するため、
   // ここでは本が開かれていないときの案内だけ出す。
   useEffect(() => {
     return window.api.onShortcut((name) => {
-      if (name === 'capture-window') void captureWindow()
+      if (name === 'capture-window') void captureWindow(false)
+      else if (name === 'capture-window-logical') void captureWindow(true)
       else if (name === 'save-pages' && !current) {
         notify('本を開いてから F9 を押してください', null, true)
       }

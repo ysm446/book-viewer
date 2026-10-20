@@ -56,16 +56,29 @@ function ensureDir(root: string): string {
   return dir
 }
 
-/** ウィンドウのコンテンツ領域を PNG で保存し、保存先パスを返す。 */
+/**
+ * ウィンドウのコンテンツ領域を PNG で保存し、保存先パスを返す。
+ * capturePage は画面の実ピクセルで返る(表示スケール 150% なら論理サイズの 1.5 倍)。
+ * logical のときは、表示スケールをかける前の論理サイズ(100% 相当)に縮めて保存する。
+ */
 export async function captureWindow(
   win: BrowserWindow,
   root: string,
-  title: string
+  logical: boolean
 ): Promise<string> {
-  const dir = ensureDir(root)
-  const image = await win.webContents.capturePage()
-  const path = uniquePath(dir, `${sanitize(title)}_${stamp()}`, '.png')
-  writeFileSync(path, image.toPNG())
+  let image = await win.webContents.capturePage()
+  if (image.isEmpty()) throw new Error('画面を取得できませんでした(空の画像)')
+  if (logical) {
+    const [width, height] = win.getContentSize()
+    const size = image.getSize()
+    if (size.width !== width || size.height !== height) {
+      image = image.resize({ width, height, quality: 'best' })
+    }
+  }
+  const png = image.toPNG()
+  if (png.length === 0) throw new Error('画像を PNG にできませんでした')
+  const path = uniquePath(ensureDir(root), stamp(), '.png')
+  writeFileSync(path, png)
   return path
 }
 

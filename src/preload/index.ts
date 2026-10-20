@@ -45,8 +45,8 @@ export interface SavePageInput {
   data: Uint8Array
 }
 
-/** main が横取りしたキー(F9 / F12)の通知名。 */
-export type ShortcutName = 'save-pages' | 'capture-window'
+/** main が横取りしたキー(F9 / F12 / Shift+F12)の通知名。 */
+export type ShortcutName = 'save-pages' | 'capture-window' | 'capture-window-logical'
 
 /** 設定の部分更新パッチ。llm はネストごと部分更新できる(main 側で深いマージ)。 */
 export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm'>> & {
@@ -89,16 +89,19 @@ const api = {
       ipcRenderer.send('system:unsubscribe')
     }
   },
-  /** ウィンドウのコンテンツ領域を PNG で保存し、保存先パスを返す(F12)。 */
-  captureWindow: (root: string, title: string): Promise<string> =>
-    ipcRenderer.invoke('screenshot:captureWindow', { root, title }),
+  /**
+   * ウィンドウのコンテンツ領域を PNG で保存し、保存先パスを返す。
+   * F12 は画面の実ピクセルのまま、logical(Shift+F12)は 100% 相当の論理サイズに縮める。
+   */
+  captureWindow: (root: string, logical: boolean): Promise<string> =>
+    ipcRenderer.invoke('screenshot:captureWindow', { root, logical }),
   /** 表示中のページ画像を無加工で保存し、保存先パスを順に返す(F9)。 */
   savePageImages: (root: string, title: string, pages: SavePageInput[]): Promise<string[]> =>
     ipcRenderer.invoke('screenshot:savePages', { root, title, pages }),
   /** 保存先をエクスプローラで開く(該当ファイルを選択した状態)。 */
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke('shell:showItemInFolder', path),
-  /** main が横取りしたキー(F9 / F12)の通知を購読する。戻り値で解除。 */
+  /** main が横取りしたキー(F9 / F12 / Shift+F12)の通知を購読する。戻り値で解除。 */
   onShortcut: (callback: (name: ShortcutName) => void): (() => void) => {
     const listener = (_e: unknown, name: ShortcutName): void => callback(name)
     ipcRenderer.on('shortcut', listener)

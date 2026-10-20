@@ -13,11 +13,6 @@ export interface ToastState {
 /** 自動で消えるまでの時間(ms)。 */
 const DISMISS_MS = 5000
 
-function basename(path: string): string {
-  const i = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return i >= 0 ? path.slice(i + 1) : path
-}
-
 export function Toast({
   toast,
   onClose
@@ -43,7 +38,7 @@ export function Toast({
         <span className="toast-msg">{toast.message}</span>
         {toast.path && (
           <>
-            <span className="toast-file">{basename(toast.path)}</span>
+            <span className="toast-file">{toast.path}</span>
             <span className="toast-hint">クリックで保存先を開く</span>
           </>
         )}

@@ -145,14 +145,19 @@ function createWindow(): void {
     if (url !== mainWindow?.webContents.getURL()) e.preventDefault()
   })
 
-  // F9 / F12 はスクリーンショット用に予約する。ページへ渡す前にここで捕まえて
+  // F9 / F12 / Shift+F12 はスクリーンショット用に予約する。ページへ渡す前にここで捕まえて
   // preventDefault することで、既定メニューの開発者ツール等に吸われないようにする。
+  // 押しっぱなしのキーリピートは握りつぶし、連写にしない。
   mainWindow.webContents.on('before-input-event', (e, input) => {
     if (input.type !== 'keyDown') return
-    if (input.control || input.alt || input.shift || input.meta) return
-    if (input.key !== 'F9' && input.key !== 'F12') return
+    if (input.control || input.alt || input.meta) return
+    let name: 'save-pages' | 'capture-window' | 'capture-window-logical'
+    if (input.key === 'F9' && !input.shift) name = 'save-pages'
+    else if (input.key === 'F12') name = input.shift ? 'capture-window-logical' : 'capture-window'
+    else return
     e.preventDefault()
-    mainWindow?.webContents.send('shortcut', input.key === 'F9' ? 'save-pages' : 'capture-window')
+    if (input.isAutoRepeat) return
+    mainWindow?.webContents.send('shortcut', name)
   })
 
   // electron-vite が dev サーバ URL を環境変数で渡す。無ければビルド済み HTML を読む。
@@ -223,11 +228,11 @@ function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, patch: AppSettingsPatch) => setSettings(patch))
 
-  // スクリーンショット(F12: ウィンドウ / F9: 表示中のページ画像)。
+  // スクリーンショット(F12: ウィンドウ / Shift+F12: 100% 相当のサイズ / F9: 表示中のページ画像)。
   // 保存先は <管理ルート>/screenshot/。失敗は例外のままレンダラへ返す。
-  ipcMain.handle('screenshot:captureWindow', (_e, a: { root: string; title: string }) => {
+  ipcMain.handle('screenshot:captureWindow', (_e, a: { root: string; logical: boolean }) => {
     if (!mainWindow) throw new Error('ウィンドウがありません')
-    return captureWindow(mainWindow, a.root, a.title)
+    return captureWindow(mainWindow, a.root, a.logical)
   })
   ipcMain.handle(
     'screenshot:savePages',
