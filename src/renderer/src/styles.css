@@ -1266,6 +1266,10 @@ input[type='checkbox']:focus-visible {
 .rf-flow.is-vertical {
   writing-mode: vertical-rl;
 }
+/* 書体「明朝」。Windows 標準の游明朝を優先する(コードは .book-md code の等幅のまま)。 */
+.rf-flow.is-mincho {
+  font-family: 'Yu Mincho', YuMincho, 'Hiragino Mincho ProN', 'Noto Serif JP', serif;
+}
 /* 見出しの直後・図の途中では画面を分けない。 */
 .rf-heading {
   break-after: avoid;

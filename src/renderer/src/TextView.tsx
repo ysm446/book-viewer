@@ -40,11 +40,16 @@ interface Props {
   columns: 1 | 2
   /** 本文の文字サイズ(px) */
   fontSize: number
+  /** 本文の書体 */
+  font: TextFont
   /** ページ送りのフェードを出すか */
   animate: boolean
   /** 文字起こしのエンジン(設定) */
   engine: TranscribeEngine
 }
+
+/** 本文の書体。ゴシックは UI と同じ書体、明朝は游明朝など。 */
+export type TextFont = 'gothic' | 'mincho'
 
 /** リーダーからのページ送り(キーボード)を受ける。 */
 export interface TextViewHandle {
@@ -162,7 +167,7 @@ type Pending = 'first' | 'last' | { block: number } | null
  * 読書位置は原本のページ番号でリーダーと共有する。文字起こしと本文の手直しは原本のページ単位。
  */
 export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
-  { root, work, page, onPageChange, vertical, columns, fontSize, animate, engine },
+  { root, work, page, onPageChange, vertical, columns, fontSize, font, animate, engine },
   ref
 ): JSX.Element {
   const [content, setContent] = useState<BookContent | null>(null)
@@ -452,7 +457,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     setScreens(count)
     setScreen(target)
     settle(target)
-  }, [sections, sec, geo, vertical, fontSize, tick, showStage, settle])
+  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle])
 
   const turn = useCallback(
     (dir: 'next' | 'prev'): void => {
@@ -684,7 +689,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                 <div className="rf-viewport" style={{ width: geo.width, height: geo.height }}>
                   <div
                     ref={flowRef}
-                    className={`rf-flow book-md ${vertical ? 'is-vertical' : ''}`}
+                    className={`rf-flow book-md ${vertical ? 'is-vertical' : ''} ${font === 'mincho' ? 'is-mincho' : ''}`}
                     style={
                       {
                         width: geo.width,

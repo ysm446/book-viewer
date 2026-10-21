@@ -18,7 +18,7 @@ import {
 } from './api'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
-import { TextView, type TextViewHandle } from './TextView'
+import { TextView, type TextFont, type TextViewHandle } from './TextView'
 import { TocPanel } from './TocPanel'
 import type { AppSettings } from '../../preload'
 
@@ -50,6 +50,12 @@ const TEXT_SIZES: { value: number; label: string }[] = [
   { value: 16, label: '中' },
   { value: 18, label: '大' },
   { value: 20, label: '特大' }
+]
+
+/** テキスト表示の本文の書体。 */
+const TEXT_FONTS: { value: TextFont; label: string }[] = [
+  { value: 'gothic', label: 'ゴシック' },
+  { value: 'mincho', label: '明朝' }
 ]
 
 interface ReaderProps {
@@ -201,7 +207,7 @@ export function Reader({
     localStorage.setItem('readerViewMode', viewMode)
   }, [viewMode])
   const [writingMode, setWritingMode] = useState<WritingMode>(work.writing_mode ?? 'horizontal')
-  // 本文の組み方と文字サイズも本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
+  // 本文の組み方・文字サイズ・書体も本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
   const [textLayout, setTextLayout] = useState<TextLayout>(() => {
     const v = localStorage.getItem('readerTextLayout')
     return v === 'horizontal' || v === 'vertical' ? v : 'book'
@@ -216,6 +222,12 @@ export function Reader({
   useEffect(() => {
     localStorage.setItem('readerTextSize', String(textSize))
   }, [textSize])
+  const [textFont, setTextFont] = useState<TextFont>(() =>
+    localStorage.getItem('readerTextFont') === 'mincho' ? 'mincho' : 'gothic'
+  )
+  useEffect(() => {
+    localStorage.setItem('readerTextFont', textFont)
+  }, [textFont])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -603,6 +615,20 @@ export function Reader({
                   ))}
                 </div>
               </div>
+              <div className="display-item">
+                <span className="display-label">書体</span>
+                <div className="seg" role="group" aria-label="書体">
+                  {TEXT_FONTS.map((f) => (
+                    <button
+                      key={f.value}
+                      className={`seg-btn ${textFont === f.value ? 'seg-active' : ''}`}
+                      onClick={() => setTextFont(f.value)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           )}
           {settings.pageMode === 'double' && viewMode === 'image' && (
@@ -681,6 +707,7 @@ export function Reader({
             vertical={textVertical}
             columns={settings.pageMode === 'double' ? 2 : 1}
             fontSize={textSize}
+            font={textFont}
             animate={animate}
             engine={settings.transcribeEngine ?? 'yomitoku'}
           />
