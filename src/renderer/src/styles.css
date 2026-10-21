@@ -46,38 +46,40 @@
   --backdrop: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
 }
+/* 白: まぶしくならないよう、真っ白を避けて面を少し落としたグレーにする。 */
 :root[data-theme='light'],
 .rf-stage.theme-light {
-  --bg: #f0f0f2;
-  --panel: #ffffff;
-  --panel-2: #f2f2f4;
-  --panel-3: #e4e4e8;
-  --panel-head: #f7f7f8;
-  --input-bg: #ffffff;
-  --border: #d9d9de;
-  --border-strong: #b1b1b8;
+  --bg: #e2e2e5;
+  --panel: #ebebed;
+  --panel-2: #e4e4e7;
+  --panel-3: #d6d6db;
+  --panel-head: #e7e7ea;
+  --input-bg: #e5e5e8;
+  --border: #cbcbd1;
+  --border-strong: #a4a4ac;
   --text: #222224;
-  --text-sub: #55555b;
-  --text-dim: #707076;
-  --accent: #2f6db5;
-  --accent-hover: #265c9a;
-  --accent-soft: rgba(47, 109, 181, 0.12);
-  --danger: #c0392b;
+  --text-sub: #4f4f55;
+  --text-dim: #646469;
+  --accent: #2a64a8;
+  --accent-hover: #23568f;
+  --accent-soft: rgba(42, 100, 168, 0.12);
+  --danger: #b3261e;
   --danger-fill: #c0392b;
   --danger-border: #e3a7a0;
-  --warn: #9a6400;
-  --ok: #2e7d32;
+  --warn: #8a5800;
+  --ok: #2a6e2e;
   --track: rgba(0, 0, 0, 0.1);
-  --stage: #e5e5e8;
-  --reading-bg: #fafaf8;
-  --scroll-thumb: #c4c4ca;
-  --scroll-thumb-hover: #a9a9b0;
+  --stage: #d9d9dd;
+  --reading-bg: #ecebe6;
+  --scroll-thumb: #b9b9c0;
+  --scroll-thumb-hover: #9e9ea6;
   --shadow-popup: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.16);
   --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.2);
   --backdrop: rgba(0, 0, 0, 0.3);
   color-scheme: light;
 }
+/* セピア: キーカラー(--accent)は面に馴染む茶色。注意(--warn)は茶と紛れない焦げ橙。 */
 :root[data-theme='sepia'],
 .rf-stage.theme-sepia {
   --bg: #ebe2cd;
@@ -85,19 +87,19 @@
   --panel-2: #eee4cd;
   --panel-3: #e3d5b6;
   --panel-head: #f0e7d2;
-  --input-bg: #fbf7ec;
+  --input-bg: #ece2ca;
   --border: #d6c6a4;
   --border-strong: #ae9a74;
   --text: #3d3022;
   --text-sub: #65543e;
   --text-dim: #7a6953;
-  --accent: #2f6db5;
-  --accent-hover: #265c9a;
-  --accent-soft: rgba(47, 109, 181, 0.12);
+  --accent: #8b5a2b;
+  --accent-hover: #774b22;
+  --accent-soft: rgba(139, 90, 43, 0.14);
   --danger: #b3261e;
   --danger-fill: #c0392b;
   --danger-border: #d9a48f;
-  --warn: #8a5800;
+  --warn: #b04a12;
   --ok: #2e6b30;
   --track: rgba(61, 48, 34, 0.12);
   --stage: #e2d7bf;
