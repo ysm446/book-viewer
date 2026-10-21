@@ -34,9 +34,6 @@ interface ReaderChatProps {
   currentPage: number
   /** 本文を渡す上限(文字数)。コンテキスト長の設定から決める。 */
   contextChars: number
-  /** 埋め込み用の llama-server を起動するための設定(本文検索に使う) */
-  serverPath: string
-  modelsDir: string
   /** 思考(reasoning)モード。設定から渡す。 */
   think: boolean
   /** チャットのシステムプロンプト(設定から差し替え可能)。 */
@@ -68,8 +65,6 @@ export function ReaderChat({
   work,
   currentPage,
   contextChars,
-  serverPath,
-  modelsDir,
   think,
   systemPrompt,
   dynamicSuggestions,
@@ -200,7 +195,7 @@ export function ReaderChat({
     const refresh = async (): Promise<void> => {
       try {
         const [st, q] = await Promise.all([
-          getIndexStatus(root, work.id, modelsDir),
+          getIndexStatus(root, work.id),
           getQueue()
         ])
         if (!alive) return
@@ -222,11 +217,11 @@ export function ReaderChat({
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [root, work.id, modelsDir])
+  }, [root, work.id])
 
   async function buildIndex(): Promise<void> {
     try {
-      await enqueueIndex(root, work.id, serverPath, modelsDir)
+      await enqueueIndex(root, work.id)
       setIndexJob({ current: 0, total: 0 })
       refreshIndexRef.current()
     } catch (e) {
@@ -234,7 +229,9 @@ export function ReaderChat({
     }
   }
 
-  const searchReady = !!index && index.chunks > 0
+  // 別の埋め込みモデルで作った古い索引は検索に使えない(作り直しを促す)。
+  const indexModelChanged = !!index && index.chunks > 0 && index.model !== index.embedding_model
+  const searchReady = !!index && index.chunks > 0 && !indexModelChanged
 
   function clearChat(): void {
     if (busy) return
@@ -276,7 +273,7 @@ export function ReaderChat({
           systemPrompt,
           think,
           contextChars,
-          search: useSearch && searchReady ? { serverPath, modelsDir } : undefined
+          search: useSearch && searchReady
         },
         {
           onSources: (s) => {
@@ -424,19 +421,19 @@ export function ReaderChat({
               本文検索の索引を作成中
               {indexJob.total > 0 ? ` ${indexJob.current}/${indexJob.total}` : '（順番待ち）'}
             </span>
-          ) : !index.embedding_model ? (
-            <span>本文検索には埋め込みモデル（例: Qwen3-Embedding）をモデル置き場に置いてください</span>
           ) : (
             <>
               <span>
-                {index.stale
-                  ? '本文が変わりました。本文検索の索引を作り直すと反映されます'
-                  : '本文検索の索引を作ると、遠いページの内容も答えに使えます'}
+                {indexModelChanged
+                  ? '埋め込みモデルが変わりました。本文検索を使うには索引を作り直してください'
+                  : index.stale
+                    ? '本文が変わりました。本文検索の索引を作り直すと反映されます'
+                    : '本文検索の索引を作ると、遠いページの内容も答えに使えます'}
               </span>
               <button
                 className="btn chat-index-btn"
                 onClick={() => void buildIndex()}
-                title={`埋め込みモデル ${index.embedding_model} で索引を作ります`}
+                title={`埋め込みモデル ${index.embedding_model} で索引を作ります（初回はモデル約 1.2 GB を取得します）`}
               >
                 {index.stale ? '作り直す' : '索引を作る'}
               </button>

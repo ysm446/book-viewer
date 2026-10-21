@@ -17,7 +17,7 @@ from .routers import chat, health, library, llm, pages, queue, roots, structure,
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     yield
-    # バックエンド終了時に llama-server(会話用・埋め込み用)も止める。
+    # バックエンド終了時に会話用の llama-server を止め、埋め込みモデルも手放す。
     llm_server.stop()
     embedding.stop()
 

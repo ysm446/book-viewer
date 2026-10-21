@@ -11,3 +11,7 @@ send2trash>=1.8,<2
 #   ./.venv/Scripts/python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
 # CUDA が使えれば GPU、無ければ CPU で自動選択される(app/layout_ocr.py)。
 yomitoku>=0.15,<0.16
+
+# 本文検索の埋め込み(Ruri v3: cl-nagoya/ruri-v3-310m)。torch / transformers は YomiToku と共用。
+# モデル(約 1.2 GB)は初回に Hugging Face から <リポジトリ>/models/embeddings/ へ取得する。
+sentence-transformers>=6.1,<7

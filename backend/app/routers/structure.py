@@ -56,29 +56,21 @@ def save_chapters(work_id: str, body: ChaptersUpdate) -> dict:
 
 
 @router.get("/{work_id}/index")
-def index_status(work_id: str, root: str, models_dir: str = "") -> dict:
-    """本文検索の索引の状態と、使える埋め込みモデル。"""
+def index_status(work_id: str, root: str) -> dict:
+    """本文検索の索引の状態と、使う埋め込みモデル。"""
     r = get_root(root)
-    model = embedding.find_model(models_dir)
-    return {**embedding.status(r, work_id, models_dir), "embedding_model": model.stem if model else None}
+    return {**embedding.status(r, work_id), "embedding_model": embedding.MODEL_NAME}
 
 
 class IndexRequest(BaseModel):
     root: str
-    server_path: str = ""
-    models_dir: str = ""
 
 
 @router.post("/{work_id}/index")
 def enqueue_index(work_id: str, body: IndexRequest) -> dict:
-    """本文検索の索引づくりをジョブキューに積む(埋め込み用の llama-server を別に起動する)。"""
+    """本文検索の索引づくりをジョブキューに積む。"""
     get_root(body.root)
     try:
-        return jobs.enqueue(
-            body.root,
-            work_id,
-            "index",
-            extra={"server_path": body.server_path, "models_dir": body.models_dir},
-        )
+        return jobs.enqueue(body.root, work_id, "index")
     except jobs.NotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

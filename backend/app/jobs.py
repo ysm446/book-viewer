@@ -67,7 +67,7 @@ def enqueue(
 
     - transcribe: 文字起こし(pages 省略時は未処理の全ページ、force で作り直し。engine を使う)
     - structure: 章立てと要約(force で章立てから作り直し)
-    - index: 本文検索の索引(extra に server_path / models_dir)
+    - index: 本文検索の索引
     """
     if kind not in KINDS:
         raise ValueError(f"未対応のジョブです: {kind}")
@@ -167,10 +167,7 @@ def _run(job: dict) -> None:
             cancel_check=cancel_check,
         )
     elif job["kind"] == "index":
-        extra = job.get("extra") or {}
-        embedding.build_index(
-            root, work_id, extra.get("server_path"), extra.get("models_dir"), cancel_check=cancel_check
-        )
+        embedding.build_index(root, work_id, cancel_check=cancel_check)
 
 
 def _worker() -> None:

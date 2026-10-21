@@ -426,32 +426,25 @@ export async function getStructure(root: string, workId: string): Promise<BookSt
 export interface IndexStatus {
   /** 索引のまとまりの数(0 なら索引なし) */
   chunks: number
-  /** 索引を作ったあとで本文が変わった */
+  /** 索引を作ったあとで本文か埋め込みモデルが変わった */
   stale: boolean
-  /** モデル置き場で見つかった埋め込みモデル(無ければ null) */
-  embedding_model: string | null
+  /** 索引を作ったときの埋め込みモデル(索引が無ければ null) */
+  model: string | null
+  /** 今使う埋め込みモデル(Ruri v3) */
+  embedding_model: string
 }
 
-export async function getIndexStatus(
-  root: string,
-  workId: string,
-  modelsDir: string
-): Promise<IndexStatus> {
+export async function getIndexStatus(root: string, workId: string): Promise<IndexStatus> {
   return jsonFetch(
-    `/works/${workId}/index?root=${encodeURIComponent(root)}&models_dir=${encodeURIComponent(modelsDir)}`
+    `/works/${workId}/index?root=${encodeURIComponent(root)}`
   )
 }
 
 /** 本文検索の索引づくりをキューに積む。 */
-export async function enqueueIndex(
-  root: string,
-  workId: string,
-  serverPath: string,
-  modelsDir: string
-): Promise<JobQueue> {
+export async function enqueueIndex(root: string, workId: string): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/index`, {
     method: 'POST',
-    body: JSON.stringify({ root, server_path: serverPath, models_dir: modelsDir })
+    body: JSON.stringify({ root })
   })
 }
 
@@ -514,7 +507,8 @@ interface ChatOpts {
   /** 本文を渡す上限(文字数)。省略時は backend の既定 */
   contextChars?: number
   /** 本文検索を使う(埋め込み用の llama-server を起動するための情報)。省略時は検索しない */
-  search?: { serverPath: string; modelsDir: string }
+  /** 本文検索(埋め込みの索引)も使うか */
+  search?: boolean
 }
 
 function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
@@ -527,9 +521,7 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
     page_focus: opts?.pageFocus ?? false,
     system_prompt: opts?.systemPrompt ?? null,
     context_chars: opts?.contextChars ?? null,
-    search: opts?.search
-      ? { server_path: opts.search.serverPath, models_dir: opts.search.modelsDir }
-      : null,
+    search: opts?.search ?? false,
     think: opts?.think ?? false
   })
 }

@@ -108,7 +108,7 @@ def _search_context(
     work_id: str,
     messages: list[dict],
     current_page: int | None,
-    search_opts: dict | None,
+    use_search: bool,
     budget: int,
     exclude_pages: set[int],
 ) -> tuple[list[str], list[int]]:
@@ -117,7 +117,7 @@ def _search_context(
     今のページ付近やキーワード検索で別に渡すページ(exclude_pages)は除く。索引が無い・検索に
     失敗したときは空(会話は続ける)。戻り値は (本文, 使ったページ)。
     """
-    if search_opts is None or budget <= 0:
+    if not use_search or budget <= 0:
         return [], []
     question = _last_question(messages)
     if not question.strip():
@@ -127,8 +127,6 @@ def _search_context(
             root,
             work_id,
             question,
-            search_opts.get("server_path"),
-            search_opts.get("models_dir"),
             max_page=current_page,
             exclude_pages=exclude_pages,
         )
@@ -292,7 +290,7 @@ def _build_chat_messages(
     page_focus: bool = False,
     system_prompt: str | None = None,
     context_chars: int | None = None,
-    search_opts: dict | None = None,
+    use_search: bool = False,
 ) -> tuple[list[dict], dict]:
     """本の情報と本文(読んだ範囲)を system に、会話履歴を並べた LLM メッセージ列を組む。
 
@@ -303,8 +301,7 @@ def _build_chat_messages(
     - page_focus=True: 本文を踏まえつつ、現在ページの内容を中心に答えさせる。
     - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える(Vision モデルのみ)。
     - context_chars: 本文を渡す上限(文字数)。None なら CHAT_CONTEXT_CHARS。
-    - search_opts: {server_path, models_dir}。本文検索の索引があれば、質問に近い本文を
-      読んだ範囲から探して加える。無ければ検索しない。
+    - use_search: 本文検索の索引があれば、質問に近い本文を読んだ範囲から探して加える。
     - 質問の語が文字どおり出てくる本文(キーワード検索)はいつも探す。検索の分は予算の 1/4 までで、
       キーワード検索を先に使う(本文検索と併用するときは 6 割まで)。
     """
@@ -325,7 +322,7 @@ def _build_chat_messages(
     search_budget = budget // 4
     body, first, last = _reading_context(root, work_id, current_page, budget - search_budget)
     nearby = set(range(first, last + 1)) if body else set()
-    keyword_budget = int(search_budget * 0.6) if search_opts is not None else search_budget
+    keyword_budget = int(search_budget * 0.6) if use_search else search_budget
     keyword, keyword_pages = _keyword_context(
         root, work_id, messages, current_page, keyword_budget, nearby
     )
@@ -334,7 +331,7 @@ def _build_chat_messages(
         work_id,
         messages,
         current_page,
-        search_opts,
+        use_search,
         search_budget - sum(len(t) for t in keyword),
         nearby | set(keyword_pages),
     )
@@ -400,7 +397,7 @@ def chat_about_work(
     model: str = "local",
     think: bool | None = None,
     context_chars: int | None = None,
-    search_opts: dict | None = None,
+    use_search: bool = False,
 ) -> tuple[str, dict]:
     """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。
 
@@ -416,7 +413,7 @@ def chat_about_work(
         page_focus,
         system_prompt,
         context_chars,
-        search_opts,
+        use_search,
     )
     return llm.chat(base_url, llm_messages, model=model, think=think), sources
 
@@ -434,7 +431,7 @@ def chat_about_work_stream(
     model: str = "local",
     think: bool | None = None,
     context_chars: int | None = None,
-    search_opts: dict | None = None,
+    use_search: bool = False,
 ):
     """chat_about_work のストリーム版。差分 dict を順に yield する。
 
@@ -450,7 +447,7 @@ def chat_about_work_stream(
         page_focus,
         system_prompt,
         context_chars,
-        search_opts,
+        use_search,
     )
     yield {"type": "sources", **sources}
     yield from llm.chat_stream(base_url, llm_messages, model=model, think=think)
