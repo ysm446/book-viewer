@@ -22,6 +22,10 @@ class ChatRequest(BaseModel):
     current_page: int | None = None
     include_image: bool = False
     page_focus: bool = False
+    # 本文に無いことも一般知識で補って答えるか(設定)。
+    general_knowledge: bool = True
+    # ネタバレ防止(本ごと)。False なら章の要約・検索を本全体から取る。
+    spoiler_guard: bool = True
     system_prompt: str | None = None
     think: bool = False
     # 本文を渡す上限(文字数)。None なら既定(chat.CHAT_CONTEXT_CHARS)。
@@ -64,6 +68,8 @@ def work_chat(work_id: str, body: ChatRequest) -> dict:
             archive_path=archive_path,
             include_image=body.include_image,
             page_focus=body.page_focus,
+            general_knowledge=body.general_knowledge,
+            spoiler_guard=body.spoiler_guard,
             system_prompt=body.system_prompt,
             think=body.think,
             context_chars=body.context_chars,
@@ -91,6 +97,8 @@ def work_chat_stream(work_id: str, body: ChatRequest) -> StreamingResponse:
                 archive_path=archive_path,
                 include_image=body.include_image,
                 page_focus=body.page_focus,
+                general_knowledge=body.general_knowledge,
+                spoiler_guard=body.spoiler_guard,
                 system_prompt=body.system_prompt,
                 think=body.think,
                 context_chars=body.context_chars,

@@ -2,7 +2,8 @@
 
 system には本の情報、読み終えた章の要約、質問の語が出てくる本文(キーワード検索)、
 質問に近い本文(本文検索)、今のページ付近の本文を入れる。
-どれも「今開いているページまで」に限り、先の内容は渡さない(ネタバレ防止)。
+既定(ネタバレ防止)ではどれも「今開いているページまで」に限り、先の内容は渡さない。本ごとにネタバレ防止を
+切ると、章の要約・本全体の要約・検索は本全体から取る(今のページ付近の本文は今のページまでのまま)。
 """
 
 from __future__ import annotations
@@ -37,10 +38,32 @@ def _data_url(raw: bytes) -> str:
 
 _CHAT_SYSTEM = (
     "あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。"
-    "以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。"
+    "以下の「本の情報」と「本文」をもとに、日本語で簡潔に答えてください。"
     "本文を根拠にするときは、どのページか(p.○)を添えてください。"
-    "本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。"
+)
+
+# 先の内容の扱い(本ごとの「ネタバレ防止」)。基本人格の後ろに足す。
+_SPOILER_GUARD_ON = (
+    "「本文」は読者が読んだ範囲(今開いているページまで)です。"
     "読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。"
+)
+_SPOILER_GUARD_OFF = (
+    "読者はネタバレを気にしないので、今のページより先の内容(章の要約や検索で渡した先のページ)にも"
+    "触れてかまいません。先の内容に触れるときは、そのページ(p.○)を添えてください。"
+)
+
+# 本文に書かれていないことの扱い(設定「本文に無いことも一般知識で補う」)。基本人格の後ろに足すので、
+# システムプロンプトを書き換えていても効く。
+_GENERAL_KNOWLEDGE_ON = (
+    "本文に書かれていない・足りないときは、「本文には書かれていませんが」と一言断ってから、"
+    "一般的な知識や推測で積極的に補って答えてください。「書かれていません」だけで終わらせないこと。"
+)
+# ネタバレ防止のときに一般知識の指示へ足す(本の外の知識で先の展開を話さないように)。
+_GENERAL_KNOWLEDGE_NO_SPOILER = (
+    "ただし、この本の先の展開(小説の結末や種明かしなど)は、一般的な知識としても話さないでください。"
+)
+_GENERAL_KNOWLEDGE_OFF = (
+    "本文に書かれていないことは、一般的な知識や推測で補わず、「本文には書かれていません」と答えてください。"
 )
 
 # チャットに渡す本文の既定の上限(文字数)。コンテキスト長が分かれば呼び出し側が調整する。
@@ -77,42 +100,57 @@ def _reading_context(
 
 
 def _read_chapters(
-    root: Path, work_id: str, current_page: int | None, budget: int
+    root: Path, work_id: str, current_page: int | None, budget: int, spoiler_guard: bool = True
 ) -> tuple[list[str], str | None]:
-    """読み終えた章(今のページより前で終わる章)の要約と、今読んでいる章の題名。
+    """章の要約と、今読んでいる章の題名。
 
-    要約は今のページに近い章から budget 文字まで。先の章と本全体の要約は入れない(ネタバレ防止)。
-    章立てが無ければ ([], None)。
+    ネタバレ防止(既定)なら、読み終えた章(今のページより前で終わる章)の要約を今のページに近い章から
+    budget 文字まで。先の章と本全体の要約は入れない。ネタバレ防止を切ったら、本全体の要約と、
+    今のページに近い順にすべての章(先の章も)の要約を budget 文字まで入れる。章立てが無ければ ([], None)。
     """
     try:
-        chapters = structure.get_structure(root, work_id)["chapters"]
+        st = structure.get_structure(root, work_id)
+        chapters = st["chapters"]
     except Exception:  # noqa: BLE001 - 章立ては補助情報なので、読めなくても会話は続ける
         return [], None
     if current_page is None:
         return [], None
     current = next((c["title"] for c in chapters if c["start"] <= current_page <= c["end"]), None)
-    picked: list[str] = []
+    picked: list[tuple[int, str]] = []
     used = 0
-    for c in reversed([c for c in chapters if c["end"] < current_page and c.get("summary")]):
+    if spoiler_guard:
+        candidates = list(reversed([c for c in chapters if c["end"] < current_page and c.get("summary")]))
+    else:
+        book_summary = (st.get("book_summary") or "").strip()
+        if book_summary:
+            text = f"### 本全体の要約\n{book_summary}"
+            picked.append((-1, text))
+            used += len(text)
+        candidates = sorted(
+            (c for c in chapters if c.get("summary")),
+            key=lambda c: 0 if c["start"] <= current_page <= c["end"]
+            else min(abs(c["start"] - current_page), abs(c["end"] - current_page)),
+        )
+    for c in candidates:
         text = f"### {c['title']}(p.{c['start'] + 1}〜p.{c['end'] + 1})\n{c['summary']}"
         if picked and used + len(text) > budget:
             break
-        picked.append(text)
+        picked.append((c["start"], text))
         used += len(text)
-    picked.reverse()
-    return picked, current
+    picked.sort(key=lambda x: x[0])
+    return [t for _, t in picked], current
 
 
 def _search_context(
     root: Path,
     work_id: str,
     messages: list[dict],
-    current_page: int | None,
+    max_page: int | None,
     use_search: bool,
     budget: int,
     exclude_pages: set[int],
 ) -> tuple[list[str], list[int]]:
-    """最後の質問に近い本文のまとまりを、読んだ範囲(今のページまで)から探して並べる。
+    """最後の質問に近い本文のまとまりを、max_page まで(ネタバレ防止なら今のページまで)から探して並べる。
 
     今のページ付近やキーワード検索で別に渡すページ(exclude_pages)は除く。索引が無い・検索に
     失敗したときは空(会話は続ける)。戻り値は (本文, 使ったページ)。
@@ -127,7 +165,7 @@ def _search_context(
             root,
             work_id,
             question,
-            max_page=current_page,
+            max_page=max_page,
             exclude_pages=exclude_pages,
         )
     except Exception:  # noqa: BLE001 - 検索は補助なので、失敗しても会話は止めない
@@ -245,18 +283,18 @@ def _keyword_context(
     root: Path,
     work_id: str,
     messages: list[dict],
-    current_page: int | None,
+    max_page: int | None,
     budget: int,
     exclude_pages: set[int],
 ) -> tuple[list[str], list[int]]:
-    """最後の質問の語が出てくる本文を並べる。戻り値は (本文, 使ったページ)。"""
+    """最後の質問の語が出てくる本文を max_page まで探して並べる。戻り値は (本文, 使ったページ)。"""
     question = _last_question(messages)
     if not question.strip() or budget <= 0:
         return [], []
     out: list[str] = []
     pages: list[int] = []
     used = 0
-    for h in keyword_search(root, work_id, question, max_page=current_page, exclude_pages=exclude_pages):
+    for h in keyword_search(root, work_id, question, max_page=max_page, exclude_pages=exclude_pages):
         text = f"--- p.{h['page'] + 1} ---\n{h['text']}"
         if out and used + len(text) > budget:
             break
@@ -288,6 +326,8 @@ def _build_chat_messages(
     archive_path: Path | None,
     include_image: bool,
     page_focus: bool = False,
+    general_knowledge: bool = True,
+    spoiler_guard: bool = True,
     system_prompt: str | None = None,
     context_chars: int | None = None,
     use_search: bool = False,
@@ -299,6 +339,8 @@ def _build_chat_messages(
 
     - system_prompt: チャットの基本人格(空/None なら既定 _CHAT_SYSTEM)。
     - page_focus=True: 本文を踏まえつつ、現在ページの内容を中心に答えさせる。
+    - general_knowledge: 本文に無いことも断ったうえで一般知識で補わせるか(False なら本文だけで答えさせる)。
+    - spoiler_guard: ネタバレ防止。False なら章の要約・検索を本全体から取り、先の内容に触れてよいと伝える。
     - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える(Vision モデルのみ)。
     - context_chars: 本文を渡す上限(文字数)。None なら CHAT_CONTEXT_CHARS。
     - use_search: 本文検索の索引があれば、質問に近い本文を読んだ範囲から探して加える。
@@ -306,17 +348,27 @@ def _build_chat_messages(
       キーワード検索を先に使う(本文検索と併用するときは 6 割まで)。
     """
     focus = (system_prompt or "").strip() or _CHAT_SYSTEM
+    focus += "\n" + (_SPOILER_GUARD_ON if spoiler_guard else _SPOILER_GUARD_OFF)
+    focus += "\n" + (_GENERAL_KNOWLEDGE_ON if general_knowledge else _GENERAL_KNOWLEDGE_OFF)
+    if general_knowledge and spoiler_guard:
+        focus += _GENERAL_KNOWLEDGE_NO_SPOILER
+    # 検索で探す範囲。ネタバレ防止なら今のページまで、切っていれば本全体。
+    limit = current_page if spoiler_guard else None
+    scope = "読んだ範囲から" if spoiler_guard else "本全体から"
     sections = ["## 本の情報", *_book_info(root, work_id)]
     if current_page is not None:
         sections.append(f"読者が今開いているページ: p.{current_page + 1}")
 
     budget = context_chars if context_chars and context_chars > 0 else CHAT_CONTEXT_CHARS
-    # 読み終えた章の要約に 1/3 まで、残りを今のページ付近の本文に使う。
-    summaries, current_chapter = _read_chapters(root, work_id, current_page, budget // 3)
+    # 章の要約に 1/3 まで、残りを今のページ付近の本文に使う。
+    summaries, current_chapter = _read_chapters(
+        root, work_id, current_page, budget // 3, spoiler_guard
+    )
     if current_chapter:
         sections.append(f"読者が今読んでいる章: {current_chapter}")
     if summaries:
-        sections += ["", "## 読み終えた章の要約", *summaries]
+        heading = "## 読み終えた章の要約" if spoiler_guard else "## 章の要約(先の章も含む)"
+        sections += ["", heading, *summaries]
         budget -= sum(len(t) for t in summaries)
     # 質問の語・質問に近い本文(検索)の分を先に取り分けておく。
     search_budget = budget // 4
@@ -324,21 +376,21 @@ def _build_chat_messages(
     nearby = set(range(first, last + 1)) if body else set()
     keyword_budget = int(search_budget * 0.6) if use_search else search_budget
     keyword, keyword_pages = _keyword_context(
-        root, work_id, messages, current_page, keyword_budget, nearby
+        root, work_id, messages, limit, keyword_budget, nearby
     )
     found, found_pages = _search_context(
         root,
         work_id,
         messages,
-        current_page,
+        limit,
         use_search,
         search_budget - sum(len(t) for t in keyword),
         nearby | set(keyword_pages),
     )
     if keyword:
-        sections += ["", "## 質問の語が出てくる本文(読んだ範囲から。語の前後だけ)", *keyword]
+        sections += ["", f"## 質問の語が出てくる本文({scope}。語の前後だけ)", *keyword]
     if found:
-        sections += ["", "## 質問に関係しそうな本文(読んだ範囲から検索。ページ順ではない)", *found]
+        sections += ["", f"## 質問に関係しそうな本文({scope}検索。ページ順ではない)", *found]
     if body:
         note = f"p.{first + 1}〜p.{last + 1}"
         if first > 0:
@@ -393,6 +445,8 @@ def chat_about_work(
     archive_path: Path | None = None,
     include_image: bool = False,
     page_focus: bool = False,
+    general_knowledge: bool = True,
+    spoiler_guard: bool = True,
     system_prompt: str | None = None,
     model: str = "local",
     think: bool | None = None,
@@ -411,6 +465,8 @@ def chat_about_work(
         archive_path,
         include_image,
         page_focus,
+        general_knowledge,
+        spoiler_guard,
         system_prompt,
         context_chars,
         use_search,
@@ -427,6 +483,8 @@ def chat_about_work_stream(
     archive_path: Path | None = None,
     include_image: bool = False,
     page_focus: bool = False,
+    general_knowledge: bool = True,
+    spoiler_guard: bool = True,
     system_prompt: str | None = None,
     model: str = "local",
     think: bool | None = None,
@@ -445,6 +503,8 @@ def chat_about_work_stream(
         archive_path,
         include_image,
         page_focus,
+        general_knowledge,
+        spoiler_guard,
         system_prompt,
         context_chars,
         use_search,

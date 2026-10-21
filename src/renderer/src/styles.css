@@ -861,10 +861,12 @@ input[type='checkbox']:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.reader-chat-clear {
+.reader-chat-clear,
+.reader-chat-spoiler {
   height: 26px;
   padding: 0 10px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .reader-chat-log {
   flex: 1;
@@ -2381,6 +2383,16 @@ input[type='checkbox']:focus-visible {
   padding: 6px;
   overflow-y: auto;
   max-height: 60vh;
+}
+/* モデル一覧の区切り(最近使ったモデル / ほかのモデル)。 */
+.mp-section {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.mp-section-sep {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
 }
 .mp-empty {
   padding: 24px 16px;

@@ -37,6 +37,7 @@ import { Settings } from './Settings'
 import { ModelPicker } from './ModelPicker'
 import { SystemResourceMonitor } from './SystemResourceMonitor'
 import { Toast, type ToastState } from './Toast'
+import { useStoredFlag } from './useStoredFlag'
 import type { AppSettings, AppSettingsPatch } from '../../preload'
 
 /** プロセッサ(チップ)アイコン。 */
@@ -77,6 +78,8 @@ function bySortIndex(a: Work, b: Work): number {
 
 const SIDEBAR_MIN = 240
 const SIDEBAR_DEFAULT = 340
+/** 最近使ったモデルとして覚える数(モデル一覧で上に並べる)。 */
+const RECENT_MODELS_MAX = 10
 
 function fmtElapsed(sec: number): string {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
@@ -90,7 +93,8 @@ export function App(): JSX.Element {
   const [message, setMessage] = useState('')
   const [current, setCurrent] = useState<Work | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // 左ペイン(一覧)の開閉。次回起動時も同じ状態で開く。
+  const [sidebarOpen, setSidebarOpen] = useStoredFlag('sidebarOpen', true)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [query, setQuery] = useState('')
@@ -112,11 +116,11 @@ export function App(): JSX.Element {
   const [renameValue, setRenameValue] = useState('')
   const [queue, setQueue] = useState<JobQueue | null>(null)
   const [currentElapsed, setCurrentElapsed] = useState(0)
-  // 目次パネルの開閉は本をまたいで保持する。
-  const [readerShowInfo, setReaderShowInfo] = useState(false)
-  // しおり一覧は既定で常時表示。
-  const [readerShowBookmarks, setReaderShowBookmarks] = useState(true)
-  const [readerShowChat, setReaderShowChat] = useState(false)
+  // リーダーの目次・しおり・チャットの開閉は本をまたいで保持し、次回起動時も同じ状態で開く。
+  // しおり一覧は既定で表示。
+  const [readerShowInfo, setReaderShowInfo] = useStoredFlag('readerShowToc', false)
+  const [readerShowBookmarks, setReaderShowBookmarks] = useStoredFlag('readerShowBookmarks', true)
+  const [readerShowChat, setReaderShowChat] = useStoredFlag('readerShowChat', false)
   // 下部ステータスバーのリソース表示トグル(localStorage に保持)。
   const [showResources, setShowResources] = useState<boolean>(
     () => localStorage.getItem('showResources') === '1'
@@ -422,6 +426,12 @@ export function App(): JSX.Element {
         baseUrl: settings.llm.baseUrl
       })
       setLlmStatus(status)
+      // 読み込めたモデルを最近使ったモデルの先頭に記録する(モデル一覧で上に並べる)。
+      const recentModels = [
+        model.path,
+        ...(settings.llm.recentModels ?? []).filter((p) => p !== model.path)
+      ].slice(0, RECENT_MODELS_MAX)
+      changeSettings({ llm: { recentModels } })
     } catch (e) {
       // 失敗したらエラーを見せるためピッカーを開き直す。
       setModelError((e as Error).message)
@@ -833,6 +843,7 @@ export function App(): JSX.Element {
           modelsDir={modelsDir}
           loadingName={loadingModel}
           activeModel={llmStatus.running ? llmStatus.model : null}
+          recentModels={settings?.llm.recentModels ?? []}
           error={modelError}
           onLoad={handleLoadModel}
           onClose={() => setShowModelPicker(false)}

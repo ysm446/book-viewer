@@ -1,7 +1,7 @@
 # UI スタイルガイド
 
 作成日時: 2026-08-11 18:52
-更新日時: 2026-10-21 10:28
+更新日時: 2026-10-21 10:48
 
 このアプリ（book-viewer。旧 manga-viewer）の UI を一貫させるための唯一の基準。色・タイポグラフィ・余白・
 部品・状態表現・モーションをここに集約する。**UI を変更するときは必ずこの文書に従う。**
@@ -354,6 +354,9 @@ ON は `--accent` 塗り + 白のチェック。複数選択・任意項目に�
 破壊的な項目は末尾に置き、`#ff8a8a` の文字色にする。
 背後には `.popup-backdrop`（`position: fixed; inset: 0`）を敷いて外側クリックで閉じる。
 
+モデル一覧（`.mp-list`）は最近使ったモデルを上にまとめ、`.mp-section`（`11px` / `--text-dim`）の見出しで
+「最近使ったモデル」「ほかのモデル」に分ける（2 つ目の見出しの上に `border-top`）。
+
 ### 5.11 モーダル
 
 - 構造: `.modal-backdrop`（`rgba(0,0,0,.5)`, `z-index: 50`）→ `.modal`（`--panel` / `radius 8px` /
@@ -437,6 +440,9 @@ focus で `--accent` の枠）。要確認・手直し済みの印（`.text-page
 
 使い方の説明は会話エリアに常に出さず、見出しの `?`（`.icon-btn`）を押したときだけ `.ex-popup` で右寄せに出す
 （`width 260px` / `12px` / `line-height 1.6` / `--text-sub`）。Escape と外側クリックで閉じる。
+
+見出しの「ネタバレ防止」（`.reader-chat-spoiler`）は本ごとのボタン型トグル。「クリア」と同じ `26px` / `12px` の
+`.btn` で、ON は `.btn-active`（グレー）＋ `aria-pressed`。題名（`.reader-chat-title`）は狭いと … で省略される。
 
 ### 5.13.5 チャットの本文検索（`.chat-index`）と参照（`.chat-sources`）
 

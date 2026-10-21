@@ -502,6 +502,10 @@ interface ChatOpts {
   currentPage?: number
   includeImage?: boolean
   pageFocus?: boolean
+  /** 本文に無いことも一般知識で補って答えるか */
+  generalKnowledge?: boolean
+  /** ネタバレ防止(本ごと)。false なら章の要約・検索を本全体から取る */
+  spoilerGuard?: boolean
   systemPrompt?: string
   think?: boolean
   /** 本文を渡す上限(文字数)。省略時は backend の既定 */
@@ -519,6 +523,8 @@ function chatBody(root: string, messages: ChatTurn[], opts?: ChatOpts): string {
     current_page: opts?.currentPage ?? null,
     include_image: opts?.includeImage ?? false,
     page_focus: opts?.pageFocus ?? false,
+    general_knowledge: opts?.generalKnowledge ?? true,
+    spoiler_guard: opts?.spoilerGuard ?? true,
     system_prompt: opts?.systemPrompt ?? null,
     context_chars: opts?.contextChars ?? null,
     search: opts?.search ?? false,

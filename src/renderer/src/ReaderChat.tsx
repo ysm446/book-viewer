@@ -12,6 +12,31 @@ import {
 } from './api'
 import { Markdown } from './Markdown'
 
+/**
+ * 本ごとのネタバレ防止(localStorage)。既定は ON(今のページまでの内容だけで答える)。
+ * 技術書などで先の内容も使ってほしい本だけ OFF にして覚えておく。
+ */
+const SPOILER_STORE = 'chatSpoilerGuard'
+
+function loadSpoilerGuard(workId: string): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(SPOILER_STORE) ?? '{}')[workId] !== false
+  } catch {
+    return true
+  }
+}
+
+function saveSpoilerGuard(workId: string, on: boolean): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(SPOILER_STORE) ?? '{}')
+    if (on) delete all[workId]
+    else all[workId] = false
+    localStorage.setItem(SPOILER_STORE, JSON.stringify(all))
+  } catch {
+    // 保存できなくても、この本を開いている間は切り替えが効く
+  }
+}
+
 /** 応答の材料にした本文を 1 行で示す(答えが的外れなときに、何を見て答えたか分かるように)。 */
 function sourcesLabel(s: ChatSources): string {
   const pages = (ps: number[]): string =>
@@ -29,6 +54,8 @@ function sourcesLabel(s: ChatSources): string {
 
 interface ReaderChatProps {
   root: string
+  /** 会話用のモデルが読み込まれているか。読み込まれていなければ送信できない。 */
+  llmReady: boolean
   work: Work
   /** 現在開いているページ(見開きなら後ろ側)。ここまでの本文を文脈に使い、画像添付にも使う。 */
   currentPage: number
@@ -40,6 +67,8 @@ interface ReaderChatProps {
   systemPrompt: string
   /** 候補チップに、内容から作った質問を混ぜるか(設定から渡す)。 */
   dynamicSuggestions: boolean
+  /** 本文に無いことも一般知識で補って答えるか(設定から渡す)。 */
+  generalKnowledge: boolean
   /** サイドバー幅(px)。ドラッグリサイズ用に親から渡す。 */
   width?: number
 }
@@ -62,19 +91,33 @@ const MAX_DYNAMIC = 2 // うち、内容から作られた質問に使う枠
 /** 本について会話するサイドチャット。履歴はセッションのみ(本を切り替えると消える)。 */
 export function ReaderChat({
   root,
+  llmReady,
   work,
   currentPage,
   contextChars,
   think,
   systemPrompt,
   dynamicSuggestions,
+  generalKnowledge,
   width
 }: ReaderChatProps): JSX.Element {
+  // モデル未読込のときの送信ボタン・候補の案内。
+  const notReadyHint = '上部の「モデルを読み込む」でモデルを読み込むと送信できます'
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   // 見出しの ? で開く使い方の案内。
   const [hintOpen, setHintOpen] = useState(false)
+  // ネタバレ防止(本ごと)。本が変わったら、その本の設定を読み直す。
+  const [spoilerGuard, setSpoilerGuard] = useState(() => loadSpoilerGuard(work.id))
+  useEffect(() => {
+    setSpoilerGuard(loadSpoilerGuard(work.id))
+  }, [work.id])
+  function toggleSpoilerGuard(): void {
+    const next = !spoilerGuard
+    setSpoilerGuard(next)
+    saveSpoilerGuard(work.id, next)
+  }
   // 開いている間の Escape は案内だけ閉じる(リーダーの「一覧へ戻る」より先に捕まえる)。
   useEffect(() => {
     if (!hintOpen) return
@@ -243,7 +286,7 @@ export function ReaderChat({
 
   async function send(text: string): Promise<void> {
     const q = text.trim()
-    if (!q || busy) return
+    if (!q || busy || !llmReady) return
     const base: ChatTurn[] = [...messages, { role: 'user', content: q }]
     // 応答用のプレースホルダを1つ足し、ストリームで埋めていく。
     setMessages([...base, { role: 'assistant', content: '', reasoning: '' }])
@@ -270,6 +313,8 @@ export function ReaderChat({
           currentPage,
           includeImage,
           pageFocus,
+          generalKnowledge,
+          spoilerGuard,
           systemPrompt,
           think,
           contextChars,
@@ -315,6 +360,19 @@ export function ReaderChat({
     <div className="reader-chat" style={width !== undefined ? { flexBasis: width } : undefined}>
       <div className="reader-chat-head">
         <span className="reader-chat-title">✦ この本について質問</span>
+        {/* ネタバレ防止(本ごと)。ON は今のページまで、OFF は先の章の要約・先のページの検索も使う。 */}
+        <button
+          className={`btn reader-chat-spoiler ${spoilerGuard ? 'btn-active' : ''}`}
+          aria-pressed={spoilerGuard}
+          onClick={toggleSpoilerGuard}
+          title={
+            spoilerGuard
+              ? 'ネタバレ防止: ON(いま開いているページまでの内容で答えます)。押すと、先のページも使って答えます(この本だけ)'
+              : 'ネタバレ防止: OFF(先の章の要約や先のページの検索も使って答えます)。押すと、いま開いているページまでに戻します(この本だけ)'
+          }
+        >
+          ネタバレ防止
+        </button>
         {/* 使い方の案内。会話エリアを狭めないよう、? を押したときだけポップアップで出す。 */}
         <div className="chat-hint">
           <button
@@ -330,7 +388,11 @@ export function ReaderChat({
             <>
               <div className="popup-backdrop" onClick={() => setHintOpen(false)} />
               <div className="ex-popup chat-hint-popup" role="note">
-                この本について質問にお答えします。いま開いているページまでの本文をもとに答えます（先のページは読みません）。下の候補から選ぶか、質問を入力してください。
+                この本について質問にお答えします。
+                {spoilerGuard
+                  ? 'いま開いているページまでの本文をもとに答えます（先のページは読みません）。'
+                  : 'ネタバレ防止が OFF なので、先の章の要約や先のページも使って答えます。'}
+                下の候補から選ぶか、質問を入力してください。「ネタバレ防止」はこの本だけの切り替えです。
               </div>
             </>
           )}
@@ -396,8 +458,14 @@ export function ReaderChat({
               key={`${c.dynamic ? 'dyn' : 'fix'}:${c.text}`}
               className={`chat-chip${c.dynamic ? ' chat-chip-dynamic' : ''}`}
               onClick={() => void send(c.text)}
-              disabled={busy}
-              title={c.dynamic ? `${c.text}(いまの内容から作られた質問)` : c.text}
+              disabled={busy || !llmReady}
+              title={
+                !llmReady
+                  ? notReadyHint
+                  : c.dynamic
+                    ? `${c.text}(いまの内容から作られた質問)`
+                    : c.text
+              }
             >
               {c.dynamic && <span className="chat-chip-mark">✦</span>}
               {c.text}
@@ -448,7 +516,7 @@ export function ReaderChat({
           <textarea
             ref={inputRef}
             className="chat-textarea"
-            placeholder="質問を入力"
+            placeholder={llmReady ? '質問を入力' : 'モデルを読み込むと質問できます'}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -492,8 +560,9 @@ export function ReaderChat({
             <button
               className="chat-send"
               onClick={() => void send(input)}
-              disabled={busy || !input.trim()}
+              disabled={busy || !input.trim() || !llmReady}
               aria-label="送信"
+              title={llmReady ? '送信' : notReadyHint}
             >
               <svg
                 width="16"

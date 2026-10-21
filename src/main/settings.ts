@@ -38,19 +38,30 @@ export interface AppSettings {
     chatSystemPrompt: string
     /** チャットの候補チップに、本文から作った質問を混ぜるか */
     chatDynamicSuggestions: boolean
+    /** 本文に書かれていないことも、断ったうえで一般的な知識や推測で補って答えるか */
+    chatGeneralKnowledge: boolean
+    /** 最近読み込んだモデルのパス(先頭が最新)。モデル一覧で上に並べる */
+    recentModels: string[]
   }
 }
 
 /** 本のチャットの既定システムプロンプト(backend chat._CHAT_SYSTEM と一致させること)。 */
 export const DEFAULT_CHAT_SYSTEM_PROMPT =
   'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
-  '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
-  '本文を根拠にするときは、どのページか(p.○)を添えてください。' +
-  '本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。' +
-  '読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。'
+  '以下の「本の情報」と「本文」をもとに、日本語で簡潔に答えてください。' +
+  '本文を根拠にするときは、どのページか(p.○)を添えてください。'
 
-/** 以前(漫画向け)の既定プロンプト。保存値がこれと同じなら新しい既定に置き換える。 */
+/**
+ * 以前の既定プロンプト。保存値がこれと同じ(手を加えていない)なら新しい既定に置き換える。
+ * 本文に無いことの扱い(設定 chatGeneralKnowledge)と先の内容の扱い(本ごとのネタバレ防止)は
+ * backend が基本人格の後ろに足すので、既定からは外した。
+ */
 const LEGACY_CHAT_SYSTEM_PROMPTS = [
+  'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
+    '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
+    '本文を根拠にするときは、どのページか(p.○)を添えてください。' +
+    '本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。' +
+    '読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。',
   'あなたは漫画作品について読者の質問に答えるアシスタントです。' +
     '以下の作品情報を踏まえ、日本語で簡潔に答えてください。' +
     '作品情報に無いことは推測であると断ったうえで述べ、断定しすぎないこと。'
@@ -73,7 +84,9 @@ const DEFAULTS: AppSettings = {
     ctxSize: 4096,
     thinkingEnabled: false,
     chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
-    chatDynamicSuggestions: true
+    chatDynamicSuggestions: true,
+    chatGeneralKnowledge: true,
+    recentModels: []
   }
 }
 
@@ -113,7 +126,7 @@ export function getSettings(): AppSettings {
       for (const key of Object.keys(DEFAULTS.llm) as (keyof AppSettings['llm'])[]) {
         if (key in saved) (llm as Record<string, unknown>)[key] = saved[key]
       }
-      // 手を加えていない旧既定(漫画向け)のままなら、本向けの既定に置き換える。
+      // 手を加えていない旧既定のままなら、今の既定に置き換える。
       if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
         llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT
       }

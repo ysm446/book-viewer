@@ -21,6 +21,7 @@ import { ReaderChat } from './ReaderChat'
 import { TextView, type TextTheme, type TextViewHandle } from './TextView'
 import { TEXT_FONTS, parseTextFont, textFontOf, type TextFont } from './textFonts'
 import { TocPanel } from './TocPanel'
+import { useStoredFlag } from './useStoredFlag'
 import type { AppSettings } from '../../preload'
 
 const CHAT_MIN = 260
@@ -287,9 +288,10 @@ export function Reader({
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
   const [textCompleted, setTextCompleted] = useState(false)
   const [tags, setTags] = useState<string[]>(work.tags ?? [])
-  const [showTags, setShowTags] = useState(false)
-  // 表示設定バー(読み方向・見開きずらし)の開閉。
-  const [showDisplay, setShowDisplay] = useState(false)
+  // タグ・表示設定のバーの開閉も、本をまたいで・次回起動時も保持する。
+  const [showTags, setShowTags] = useStoredFlag('readerShowTags', false)
+  // 表示設定バー(読み方向・見開きずらし・本文の組み方など)の開閉。
+  const [showDisplay, setShowDisplay] = useStoredFlag('readerShowDisplay', false)
   const [tagInput, setTagInput] = useState('')
 
   const spreads = useMemo(
@@ -924,12 +926,14 @@ export function Reader({
           />
           <ReaderChat
             root={root}
+            llmReady={llmReady}
             work={work}
             currentPage={viewPages[viewPages.length - 1]}
             contextChars={chatContextChars(settings.llm.ctxSize)}
             think={settings.llm.thinkingEnabled}
             systemPrompt={settings.llm.chatSystemPrompt}
             dynamicSuggestions={settings.llm.chatDynamicSuggestions}
+            generalKnowledge={settings.llm.chatGeneralKnowledge}
             width={chatWidth}
           />
         </>

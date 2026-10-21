@@ -32,10 +32,8 @@ function ctxIndex(n: number): number {
 // main/settings.ts の DEFAULT_CHAT_SYSTEM_PROMPT と一致させること。
 const DEFAULT_CHAT_SYSTEM_PROMPT =
   'あなたは、読者がいま読んでいる本について質問に答える読書アシスタントです。' +
-  '以下の「本の情報」と「本文」(読者が読んだ範囲)を根拠に、日本語で簡潔に答えてください。' +
-  '本文を根拠にするときは、どのページか(p.○)を添えてください。' +
-  '本文に書かれていないことは、推測や一般的な知識であると断ったうえで述べ、断定しすぎないこと。' +
-  '読者がまだ読んでいない先の内容(結末や種明かしなど)には触れないでください。'
+  '以下の「本の情報」と「本文」をもとに、日本語で簡潔に答えてください。' +
+  '本文を根拠にするときは、どのページか(p.○)を添えてください。'
 
 function ResetIcon(): JSX.Element {
   return (
@@ -563,6 +561,26 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                   onChange({ llm: { ...settings.llm, chatSystemPrompt: e.target.value } })
                 }
               />
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                本文に無いことも一般知識で補う
+                <span className="settings-desc">
+                  本文に書かれていないときも、そう断ったうえで一般的な知識や推測で答えます。
+                  OFF なら本文に書かれていることだけで答えます(どちらも、まだ読んでいない先の展開には触れません)
+                </span>
+              </div>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.llm.chatGeneralKnowledge}
+                  onChange={(e) =>
+                    onChange({ llm: { ...settings.llm, chatGeneralKnowledge: e.target.checked } })
+                  }
+                />
+                <span className="switch-track" />
+              </label>
             </div>
 
             <div className="settings-row">

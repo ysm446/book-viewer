@@ -27,6 +27,8 @@ export interface AppSettings {
     thinkingEnabled: boolean
     chatSystemPrompt: string
     chatDynamicSuggestions: boolean
+    chatGeneralKnowledge: boolean
+    recentModels: string[]
   }
 }
 

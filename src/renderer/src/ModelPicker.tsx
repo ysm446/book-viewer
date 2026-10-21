@@ -7,6 +7,8 @@ interface ModelPickerProps {
   modelsDir: string
   loadingName: string | null
   activeModel: string | null
+  /** 最近読み込んだモデルのパス(先頭が最新)。一覧の上に並べる */
+  recentModels: string[]
   error: string | null
   onLoad: (model: LlmModel) => void
   onClose: () => void
@@ -33,10 +35,18 @@ export function ModelPicker({
   modelsDir,
   loadingName,
   activeModel,
+  recentModels,
   error,
   onLoad,
   onClose
 }: ModelPickerProps): JSX.Element {
+  // 最近使ったモデルを新しい順に上へ、残りはフォルダを走査した順のまま下へ並べる。
+  const recentIndex = new Map(recentModels.map((p, i) => [p, i]))
+  const recent = models
+    .filter((m) => recentIndex.has(m.path))
+    .sort((a, b) => (recentIndex.get(a.path) ?? 0) - (recentIndex.get(b.path) ?? 0))
+  const others = models.filter((m) => !recentIndex.has(m.path))
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
@@ -65,34 +75,43 @@ export function ModelPicker({
               設定 &gt; ランタイム でフォルダを指定できます。
             </div>
           ) : (
-            models.map((m) => {
-              const param = paramBadge(m.name)
-              const quant = quantBadge(m.name)
-              const isLoading = loadingName === m.name
-              const isActive = activeModel === m.name
-              return (
-                <button
-                  key={m.path}
-                  className={`mp-item ${isActive ? 'mp-item-active' : ''}`}
-                  onClick={() => onLoad(m)}
-                  disabled={loadingName !== null}
-                  title={m.path}
-                >
-                  <span className="mp-name">{m.name}</span>
-                  <span className="mp-badges">
-                    {isLoading && <span className="mp-loading">読み込み中…</span>}
-                    {isActive && !isLoading && <span className="mp-badge mp-badge-active">使用中</span>}
-                    {m.vision && <span className="mp-badge mp-badge-vision">Vision</span>}
-                    {param && <span className="mp-badge">{param}</span>}
-                    {quant && <span className="mp-badge mp-badge-quant">{quant}</span>}
-                    <span className="mp-size">{sizeGb(m.size)}</span>
-                  </span>
-                </button>
-              )
-            })
+            <>
+              {recent.length > 0 && <div className="mp-section">最近使ったモデル</div>}
+              {recent.map(renderItem)}
+              {recent.length > 0 && others.length > 0 && (
+                <div className="mp-section mp-section-sep">ほかのモデル</div>
+              )}
+              {others.map(renderItem)}
+            </>
           )}
         </div>
       </div>
     </div>
   )
+
+  function renderItem(m: LlmModel): JSX.Element {
+    const param = paramBadge(m.name)
+    const quant = quantBadge(m.name)
+    const isLoading = loadingName === m.name
+    const isActive = activeModel === m.name
+    return (
+      <button
+        key={m.path}
+        className={`mp-item ${isActive ? 'mp-item-active' : ''}`}
+        onClick={() => onLoad(m)}
+        disabled={loadingName !== null}
+        title={m.path}
+      >
+        <span className="mp-name">{m.name}</span>
+        <span className="mp-badges">
+          {isLoading && <span className="mp-loading">読み込み中…</span>}
+          {isActive && !isLoading && <span className="mp-badge mp-badge-active">使用中</span>}
+          {m.vision && <span className="mp-badge mp-badge-vision">Vision</span>}
+          {param && <span className="mp-badge">{param}</span>}
+          {quant && <span className="mp-badge mp-badge-quant">{quant}</span>}
+          <span className="mp-size">{sizeGb(m.size)}</span>
+        </span>
+      </button>
+    )
+  }
 }
