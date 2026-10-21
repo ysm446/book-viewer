@@ -889,7 +889,6 @@ export function Reader({
             systemPrompt={settings.llm.chatSystemPrompt}
             dynamicSuggestions={settings.llm.chatDynamicSuggestions}
             width={chatWidth}
-            onClose={() => onShowChatChange(false)}
           />
         </>
       )}

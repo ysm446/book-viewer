@@ -29,7 +29,6 @@ interface ReaderChatProps {
   dynamicSuggestions: boolean
   /** サイドバー幅(px)。ドラッグリサイズ用に親から渡す。 */
   width?: number
-  onClose: () => void
 }
 
 // いつでも使える定番の質問。候補チップは会話と一緒にスクロールするので、
@@ -58,8 +57,7 @@ export function ReaderChat({
   think,
   systemPrompt,
   dynamicSuggestions,
-  width,
-  onClose
+  width
 }: ReaderChatProps): JSX.Element {
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [input, setInput] = useState('')
@@ -326,9 +324,6 @@ export function ReaderChat({
           title="会話をクリア"
         >
           クリア
-        </button>
-        <button className="icon-btn" onClick={onClose} aria-label="閉じる">
-          ×
         </button>
       </div>
 

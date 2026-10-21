@@ -2263,16 +2263,16 @@ input[type='checkbox']:focus-visible {
   cursor: default;
   animation: model-glow 1.6s ease-in-out infinite;
 }
-/* ロード中はうっすら青く光る枠で状態を示す */
+/* ロード中はうっすら青く光る枠で状態を示す(控えめに脈打つ程度) */
 @keyframes model-glow {
   0%,
   100% {
-    border-color: rgba(76, 141, 229, 0.35);
-    box-shadow: 0 0 4px rgba(76, 141, 229, 0.15);
+    border-color: rgba(76, 141, 229, 0.3);
+    box-shadow: 0 0 2px rgba(76, 141, 229, 0.08);
   }
   50% {
-    border-color: rgba(76, 141, 229, 0.8);
-    box-shadow: 0 0 10px rgba(76, 141, 229, 0.45);
+    border-color: rgba(76, 141, 229, 0.55);
+    box-shadow: 0 0 5px rgba(76, 141, 229, 0.2);
   }
 }
 .model-spinner {
@@ -2289,7 +2289,7 @@ input[type='checkbox']:focus-visible {
     transform: rotate(360deg);
   }
 }
-/* ロード済みの間は青い枠 + グローで「モデル常駐中」をはっきり示す */
+/* ロード済みの間は青い枠 + 薄いグローで「モデル常駐中」を示す(常に出ているので強く光らせない) */
 .model-switch {
   display: inline-flex;
   align-items: center;
@@ -2297,10 +2297,8 @@ input[type='checkbox']:focus-visible {
   height: 30px;
   padding: 0 10px 0 12px;
   background: var(--accent-soft);
-  border: 1px solid rgba(76, 141, 229, 0.75);
-  box-shadow:
-    0 0 10px rgba(76, 141, 229, 0.4),
-    inset 0 0 8px rgba(76, 141, 229, 0.12);
+  border: 1px solid rgba(76, 141, 229, 0.5);
+  box-shadow: 0 0 4px rgba(76, 141, 229, 0.18);
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
