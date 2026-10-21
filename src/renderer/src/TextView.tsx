@@ -142,6 +142,35 @@ function blockOfKey(blocks: ContentBlock[], key: AnchorKey): number {
   return i
 }
 
+/**
+ * 本ごとに、テキスト表示で最後に読んでいた画面の先頭を覚えておく(localStorage)。
+ * 原本のページ番号(last_page)だけでは 1 ページが何画面にもまたがるため、開き直すと画面単位の位置がずれる。
+ * reached はそのとき伝えた原本のページ。画像表示などで last_page が変わっていたら使わない。
+ */
+const ANCHOR_STORE = 'readerTextAnchors'
+
+function loadAnchor(workId: string, page: number): AnchorKey | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(ANCHOR_STORE) ?? '{}')[workId]
+    if (v && v.reached === page && typeof v.page === 'number' && typeof v.ord === 'number') {
+      return { page: v.page, ord: v.ord }
+    }
+  } catch {
+    // 壊れた値は無視して原本のページから開く
+  }
+  return null
+}
+
+function saveAnchor(workId: string, key: AnchorKey, reached: number): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(ANCHOR_STORE) ?? '{}')
+    all[workId] = { ...key, reached }
+    localStorage.setItem(ANCHOR_STORE, JSON.stringify(all))
+  } catch {
+    // 保存できなくても読むのは続けられる
+  }
+}
+
 /** 1 画面の大きさと段の数。 */
 interface Geometry {
   width: number
@@ -407,8 +436,9 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         reported.current = { page: reached, completed }
         onPageChangeRef.current(reached, completed)
       }
+      saveAnchor(work.id, anchorKey.current, reached)
     },
-    [blocks, sections, content?.pages_done, work.page_count]
+    [blocks, sections, content?.pages_done, work.id, work.page_count]
   )
 
   const fade = useCallback((): void => {
@@ -426,11 +456,12 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     [sections]
   )
 
-  // 本文が読み込まれた(作り直された)ら、読んでいた場所(無ければ今の原本ページ)へ移動する。
+  // 本文が作り直されたら(文字起こしの進行・やり直し)、読んでいた場所へ戻る。
+  // 開いた直後の位置は、測る処理(下の useLayoutEffect)が最初の画面を出す前に決める。
   useEffect(() => {
     if (!blocks || blocks.length === 0) return
     const key = anchorKey.current
-    jumpToBlock(key ? blockOfKey(blocks, key) : blockOfPage(blocks, pageRef.current))
+    if (key) jumpToBlock(blockOfKey(blocks, key))
   }, [blocks, jumpToBlock])
 
   // 原本のページが外から変わった(目次・しおり・スクラバー)ら、そのページの本文へ移動する。
@@ -444,7 +475,22 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useLayoutEffect(() => {
     const flow = flowRef.current
     const s = sections[sec]
-    if (!flow || !geo || !s) return
+    if (!flow || !geo || !s || !blocks) return
+    // 開いた直後(まだどの画面も出していない)は、前回の続きの画面(無ければ今の原本ページ)から始める。
+    // ここで決めずに測ると先頭の画面で落ち着き、「1 ページ目を表示中」とリーダーへ伝えて保存されてしまう。
+    if (pending.current === null && anchor.current === null) {
+      const key = loadAnchor(work.id, pageRef.current)
+      pending.current = { block: key ? blockOfKey(blocks, key) : blockOfPage(blocks, pageRef.current) }
+    }
+    // 移動先が別の区画なら、その区画を組んでから測る(今の区画で測って落ち着かない)。
+    const p0 = pending.current
+    if (p0 !== null && typeof p0 === 'object' && (p0.block < s.start || p0.block >= s.end)) {
+      const target = sections.findIndex((x) => p0.block >= x.start && p0.block < x.end)
+      if (target >= 0) {
+        setSec(target)
+        return
+      }
+    }
     const origin = flow.getBoundingClientRect()
     const extent = vertical ? flow.scrollHeight : flow.scrollWidth
     const count = Math.max(1, Math.ceil((extent + GAP) / geo.stride - 0.01))
@@ -473,7 +519,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     setScreens(count)
     setScreen(target)
     settle(target)
-  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle])
+  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle, blocks, work.id])
 
   const turn = useCallback(
     (dir: 'next' | 'prev'): void => {
