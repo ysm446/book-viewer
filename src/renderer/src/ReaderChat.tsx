@@ -89,7 +89,7 @@ export function ReaderChat({
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight + 2}px`
+    el.style.height = `${el.scrollHeight}px`
   }, [input])
 
   const dynamicShown = dynamicSuggestions ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
@@ -365,37 +365,6 @@ export function ReaderChat({
         </div>
       </div>
 
-      <div className="reader-chat-opts">
-        <label className="chat-opt" title="ここまでの流れを踏まえつつ、現在ページの内容を中心に答えます">
-          <input
-            type="checkbox"
-            checked={pageFocus}
-            onChange={(e) => setPageFocus(e.target.checked)}
-          />
-          このページについて
-        </label>
-        <label className="chat-opt" title="現在ページの画像も一緒に送る">
-          <input
-            type="checkbox"
-            checked={includeImage}
-            onChange={(e) => setIncludeImage(e.target.checked)}
-          />
-          画像
-        </label>
-        {searchReady && !indexJob && (
-          <label
-            className="chat-opt"
-            title={`読んだ範囲の本文から、質問に関係しそうな箇所を探して答えに使います（${index?.chunks} 件）`}
-          >
-            <input
-              type="checkbox"
-              checked={useSearch}
-              onChange={(e) => setUseSearch(e.target.checked)}
-            />
-            本文を検索
-          </label>
-        )}
-      </div>
       {index && (indexJob || !searchReady || index.stale) && (
         <div className="chat-index">
           {indexJob ? (
@@ -424,43 +393,76 @@ export function ReaderChat({
         </div>
       )}
 
+      {/* 入力欄・送信オプション・送信ボタンを 1 つの枠にまとめる。 */}
       <div className="reader-chat-input">
-        <textarea
-          ref={inputRef}
-          className="chat-textarea"
-          placeholder="質問を入力"
-          rows={1}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // IME 変換確定の Enter(isComposing)では送信しない。
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              void send(input)
-            }
-          }}
-        />
-        <button
-          className="chat-send"
-          onClick={() => void send(input)}
-          disabled={busy || !input.trim()}
-          aria-label="送信"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M12 19V5" />
-            <path d="m5 12 7-7 7 7" />
-          </svg>
-        </button>
+        <div className="chat-composer">
+          <textarea
+            ref={inputRef}
+            className="chat-textarea"
+            placeholder="質問を入力"
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // IME 変換確定の Enter(isComposing)では送信しない。
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                void send(input)
+              }
+            }}
+          />
+          <div className="chat-composer-bar">
+            <div className="chat-composer-opts">
+              <button
+                className={`btn chat-opt-btn ${pageFocus ? 'btn-active' : ''}`}
+                aria-pressed={pageFocus}
+                onClick={() => setPageFocus((v) => !v)}
+                title="ここまでの流れを踏まえつつ、現在ページの内容を中心に答えます"
+              >
+                このページについて
+              </button>
+              <button
+                className={`btn chat-opt-btn ${includeImage ? 'btn-active' : ''}`}
+                aria-pressed={includeImage}
+                onClick={() => setIncludeImage((v) => !v)}
+                title="現在ページの画像も一緒に送る"
+              >
+                画像
+              </button>
+              {searchReady && !indexJob && (
+                <button
+                  className={`btn chat-opt-btn ${useSearch ? 'btn-active' : ''}`}
+                  aria-pressed={useSearch}
+                  onClick={() => setUseSearch((v) => !v)}
+                  title={`読んだ範囲の本文から、質問に関係しそうな箇所を探して答えに使います（${index?.chunks} 件）`}
+                >
+                  本文を検索
+                </button>
+              )}
+            </div>
+            <button
+              className="chat-send"
+              onClick={() => void send(input)}
+              disabled={busy || !input.trim()}
+              aria-label="送信"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 19V5" />
+                <path d="m5 12 7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

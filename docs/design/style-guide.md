@@ -1,7 +1,7 @@
 # UI スタイルガイド
 
 作成日時: 2026-08-11 18:52
-更新日時: 2026-10-21 07:03
+更新日時: 2026-10-21 09:10
 
 このアプリ（book-viewer。旧 manga-viewer）の UI を一貫させるための唯一の基準。色・タイポグラフィ・余白・
 部品・状態表現・モーションをここに集約する。**UI を変更するときは必ずこの文書に従う。**
@@ -202,6 +202,8 @@ font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
   `statusbar`（`height: 26px`）。
 - 左ペイン（explorer）と右ペインは可変。分割は `.divider` で行い、最小幅を必ず決める。
 - スクロールする領域は `min-height: 0` / `min-width: 0` を付けて flex の潰れを防ぐ。
+- 横に並ぶペインの上端のバー（テキスト表示の `.text-toolbar` とチャットの `.reader-chat-head` など）は、
+  下端の線が揃うよう `30px` のコントロール + 上下 `padding 8px` + 下 border `1px` で高さを合わせる。
 
 ---
 
@@ -217,7 +219,8 @@ font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
 | `3px` | チェックボックスなど極小の面 |
 | `999px` / `50%` | プログレスのトラック / 円形のつまみ・削除ボタン |
 
-吹き出しは `10px` + 発言者側の角だけ `3px`、チップは `12px` 〜 `14px`（丸みのある小片）。
+吹き出しは `10px` + 発言者側の角だけ `3px`、チップは `12px` 〜 `14px`（丸みのある小片）、
+チャットのコンポーザー枠は `14px`、その中の送信ボタンは `50%`（円）。
 これ以外の中途半端な角丸を増やさない。
 
 ### 4.2 境界
@@ -255,6 +258,9 @@ font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
 | `.icon-btn` | `30x30` / 透明 / `font-size 16px` | アイコン単体。hover で `--panel-2` + border |
 | `.icon-btn-lg` | `font-size 20px` | リーダーなど大きく押したい所 |
 
+- ボタン型のトグルは `.btn` + ON 時 `.btn-active`、`aria-pressed` を付ける。
+  チャットの送信オプション（このページについて / 画像 / 本文を検索）は `.chat-opt-btn` で `height 26px` / `12px` に詰め、
+  コンポーザーの中では OFF を枠なし・透明（hover で `--panel-2`）にする。
 - hover は `:hover:not(:disabled)` で書く。disabled に hover 効果を出さない。
 - disabled は `opacity: .5` + `cursor: default`。
 - アイコン単体ボタンには必ず `title`（tooltip）か `aria-label` を付ける。
@@ -283,6 +289,10 @@ ON は `--accent` 塗り + 白のチェック。複数選択・任意項目に�
   focus の手掛かりを消さない。
 - textarea は本文フォント + 行間を優先し、最大高とスクロール挙動を決めてレイアウトジャンプを防ぐ。
 - placeholder は薄くしすぎない（`--text-dim` 相当まで）。
+- チャットの入力部はコンポーザー（`.chat-composer`）: 入力欄・送信オプション・送信ボタンを 1 つの枠
+  （`--input-bg` / border / `radius 14px` / `padding 8px`）にまとめ、textarea 自体は枠も背景も持たない。
+  下段 `.chat-composer-bar` の左にオプション、右に送信ボタン（`30px` の円）。枠の外に区切り線は引かない。
+  focus の青い border は textarea に focus があるときだけ枠に付ける（`:has(.chat-textarea:focus)`）。
 
 ### 5.6 セレクト
 
@@ -399,8 +409,8 @@ focus で `--accent` の枠）。要確認・手直し済みの印（`.text-page
 
 ### 5.13.5 チャットの本文検索（`.chat-index`）
 
-チャットのオプション行（`.reader-chat-opts`）の「本文を検索」は他の項目と同じチェックボックス。索引が無い・
-古い・作成中のときだけ、その下に `.chat-index`（`12px` / `--text-sub` の説明 + `26px` の小さなボタン）を出す。
+コンポーザー内の「本文を検索」は他のオプションと同じボタン型トグル。索引が無い・
+古い・作成中のときだけ、コンポーザーの上に `.chat-index`（`12px` / `--text-sub` の説明 + `26px` の小さなボタン）を出す。
 
 ### 5.14 スクラバー / オーバーレイ
 

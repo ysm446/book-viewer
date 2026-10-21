@@ -832,11 +832,13 @@ input[type='checkbox']:focus-visible {
   background: var(--panel);
   border-left: 1px solid var(--border);
 }
+/* 下端の線を隣のテキスト表示のツールバー(.text-toolbar)と揃えるため、縦の padding を合わせる
+   (どちらも 30px のボタン + 上下 8px + border 1px)。 */
 .reader-chat-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   background: var(--panel-head);
   border-bottom: 1px solid var(--border);
 }
@@ -1044,57 +1046,78 @@ input[type='checkbox']:focus-visible {
 .chat-chip-more:hover {
   color: var(--text);
 }
-.reader-chat-opts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 8px 12px 0;
-  border-top: 1px solid var(--border);
-}
-.chat-opt {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-sub);
-  white-space: nowrap;
-  cursor: pointer;
-}
+/* 入力欄・送信オプション・送信ボタンを 1 つの枠にまとめた入力部(コンポーザー)。
+   枠の外側に区切り線は引かず、枠の面と border だけで会話エリアと分ける。 */
 .reader-chat-input {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
   padding: 8px 12px 10px;
-  border-top: none;
+}
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+/* オプションのボタンを押しただけでは青くしない(入力欄の focus のときだけ)。 */
+.chat-composer:has(.chat-textarea:focus) {
+  border-color: var(--accent);
 }
 .chat-textarea {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   max-height: 120px;
-  padding: 8px 10px;
-  background: var(--input-bg);
+  padding: 4px 6px;
+  background: none;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: none;
   font: inherit;
   font-size: 13px;
   resize: none;
 }
 .chat-textarea:focus {
   outline: none;
-  border-color: var(--accent);
+}
+.chat-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-composer-opts {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* 送信時の文脈の付け外し(このページについて / 画像 / 本文を検索)。
+   OFF は枠なしの控えめな見た目、ON は .btn-active のグレー。 */
+.chat-opt-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chat-opt-btn:not(.btn-active) {
+  background: none;
+  border-color: transparent;
+  color: var(--text-sub);
+}
+.chat-opt-btn:not(.btn-active):hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
 }
 .chat-send {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%;
   cursor: pointer;
 }
 .chat-send:disabled {
@@ -1170,7 +1193,7 @@ input[type='checkbox']:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px 8px;
+  padding: 8px 12px 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-sub);
