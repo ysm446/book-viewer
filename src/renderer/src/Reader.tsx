@@ -18,7 +18,8 @@ import {
 } from './api'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
-import { TextView, type TextFont, type TextViewHandle } from './TextView'
+import { TextView, type TextTheme, type TextViewHandle } from './TextView'
+import { TEXT_FONTS, parseTextFont, textFontOf, type TextFont } from './textFonts'
 import { TocPanel } from './TocPanel'
 import type { AppSettings } from '../../preload'
 
@@ -44,18 +45,19 @@ const TEXT_LAYOUTS: { value: TextLayout; label: string }[] = [
   { value: 'vertical', label: '縦書き' }
 ]
 
+/** テキスト表示の本文の面の配色。 */
+const TEXT_THEMES: { value: TextTheme; label: string }[] = [
+  { value: 'dark', label: '黒' },
+  { value: 'sepia', label: 'セピア' },
+  { value: 'light', label: '白' }
+]
+
 /** テキスト表示の本文の文字サイズ(px)。 */
 const TEXT_SIZES: { value: number; label: string }[] = [
   { value: 14, label: '小' },
   { value: 16, label: '中' },
   { value: 18, label: '大' },
   { value: 20, label: '特大' }
-]
-
-/** テキスト表示の本文の書体。 */
-const TEXT_FONTS: { value: TextFont; label: string }[] = [
-  { value: 'gothic', label: 'ゴシック' },
-  { value: 'mincho', label: '明朝' }
 ]
 
 interface ReaderProps {
@@ -207,7 +209,7 @@ export function Reader({
     localStorage.setItem('readerViewMode', viewMode)
   }, [viewMode])
   const [writingMode, setWritingMode] = useState<WritingMode>(work.writing_mode ?? 'horizontal')
-  // 本文の組み方・文字サイズ・書体も本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
+  // 本文の組み方・文字サイズ・書体・背景も本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
   const [textLayout, setTextLayout] = useState<TextLayout>(() => {
     const v = localStorage.getItem('readerTextLayout')
     return v === 'horizontal' || v === 'vertical' ? v : 'book'
@@ -223,11 +225,19 @@ export function Reader({
     localStorage.setItem('readerTextSize', String(textSize))
   }, [textSize])
   const [textFont, setTextFont] = useState<TextFont>(() =>
-    localStorage.getItem('readerTextFont') === 'mincho' ? 'mincho' : 'gothic'
+    parseTextFont(localStorage.getItem('readerTextFont'))
   )
   useEffect(() => {
     localStorage.setItem('readerTextFont', textFont)
   }, [textFont])
+  const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  const [textTheme, setTextTheme] = useState<TextTheme>(() => {
+    const v = localStorage.getItem('readerTextTheme')
+    return v === 'sepia' || v === 'light' ? v : 'dark'
+  })
+  useEffect(() => {
+    localStorage.setItem('readerTextTheme', textTheme)
+  }, [textTheme])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -415,6 +425,11 @@ export function Reader({
       if (document.querySelector('[aria-modal="true"]')) return
       // Ctrl+S / Ctrl+B などの修飾キー付きはブラウザや OS の操作なので拾わない。
       if (e.ctrlKey || e.metaKey || e.altKey) return
+      // 書体のメニューが開いている間は、Escape でメニューだけ閉じる(一覧へは戻らない)。
+      if (fontMenuOpen) {
+        if (e.key === 'Escape') setFontMenuOpen(false)
+        return
+      }
       // テキスト表示はアプリが組んだ画面を送る。進む向きは本文の組み方で決まる(縦書きは左へ)。
       const text = viewMode === 'text'
       const back = text ? () => textRef.current?.turn('prev') : prev
@@ -430,7 +445,18 @@ export function Reader({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rtl, prev, next, onClose, toggleOffset, toggleBookmark, settings.pageMode, viewMode, textVertical])
+  }, [
+    rtl,
+    prev,
+    next,
+    onClose,
+    toggleOffset,
+    toggleBookmark,
+    settings.pageMode,
+    viewMode,
+    textVertical,
+    fontMenuOpen
+  ])
 
   // F9: 表示中のページ画像を、アーカイブ内の元データのまま保存する(見開きなら 2 枚)。
   // backend から取得したバイト列をそのまま main へ渡すので、再エンコードによる劣化はない。
@@ -617,14 +643,57 @@ export function Reader({
               </div>
               <div className="display-item">
                 <span className="display-label">書体</span>
-                <div className="seg" role="group" aria-label="書体">
-                  {TEXT_FONTS.map((f) => (
+                <div className="font-picker">
+                  <button
+                    className="reader-dir font-picker-btn"
+                    onClick={() => setFontMenuOpen((v) => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={fontMenuOpen}
+                    title="テキスト表示の本文の書体"
+                  >
+                    <span className="font-picker-label">{textFontOf(textFont).label}</span>
+                    <span className="font-picker-caret" aria-hidden="true">
+                      ▾
+                    </span>
+                  </button>
+                  {fontMenuOpen && (
+                    <>
+                      <div className="popup-backdrop" onClick={() => setFontMenuOpen(false)} />
+                      <div className="ex-popup font-picker-menu" role="menu" aria-label="書体">
+                        {TEXT_FONTS.map((f) => (
+                          <button
+                            key={f.value}
+                            className={`ex-popup-item font-picker-item ${textFont === f.value ? 'is-current' : ''}`}
+                            role="menuitemradio"
+                            aria-checked={textFont === f.value}
+                            style={{ fontFamily: f.family ?? undefined }}
+                            onClick={() => {
+                              setTextFont(f.value)
+                              setFontMenuOpen(false)
+                            }}
+                          >
+                            <span className="font-picker-check" aria-hidden="true">
+                              {textFont === f.value ? '✓' : ''}
+                            </span>
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="display-item">
+                <span className="display-label">背景</span>
+                <div className="seg" role="group" aria-label="背景">
+                  {TEXT_THEMES.map((t) => (
                     <button
-                      key={f.value}
-                      className={`seg-btn ${textFont === f.value ? 'seg-active' : ''}`}
-                      onClick={() => setTextFont(f.value)}
+                      key={t.value}
+                      className={`seg-btn ${textTheme === t.value ? 'seg-active' : ''}`}
+                      onClick={() => setTextTheme(t.value)}
+                      title="テキスト表示の本文の背景と文字の色"
                     >
-                      {f.label}
+                      {t.label}
                     </button>
                   ))}
                 </div>
@@ -708,6 +777,7 @@ export function Reader({
             columns={settings.pageMode === 'double' ? 2 : 1}
             fontSize={textSize}
             font={textFont}
+            theme={textTheme}
             animate={animate}
             engine={settings.transcribeEngine ?? 'yomitoku'}
           />

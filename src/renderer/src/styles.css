@@ -1,3 +1,13 @@
+/* テキスト表示の書体「しっぽり明朝」(OFL-1.1、assets/fonts/ShipporiMincho-OFL.txt)。
+   ほかの書体は Windows に入っているものを使う。 */
+@font-face {
+  font-family: 'Shippori Mincho';
+  src: url('./assets/fonts/ShipporiMincho-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg: #1c1c1d;
   --panel: #242425;
@@ -868,10 +878,23 @@ input[type='checkbox']:focus-visible {
   user-select: text;
   cursor: auto;
 }
-.reader-chat-intro {
-  font-size: 12px;
+/* 見出しの ? で開く使い方の案内(.ex-popup を右寄せで下に開く)。 */
+.chat-hint {
+  position: relative;
+}
+.chat-hint-btn {
+  font-size: 13px;
   color: var(--text-sub);
+}
+.chat-hint-popup {
+  top: calc(100% + 4px);
+  right: 0;
+  width: 260px;
+  padding: 10px 12px;
+  font-size: 12px;
   line-height: 1.6;
+  color: var(--text-sub);
+  white-space: normal;
 }
 .chat-msg {
   font-size: 13px;
@@ -1254,6 +1277,29 @@ input[type='checkbox']:focus-visible {
   overflow: hidden;
   user-select: text;
 }
+/* 本文の面の配色(表示設定の「背景」: 黒 / セピア / 白)。黒は既定のまま。
+   面の中(本文・ルビ・表・コード・位置の表示・案内のボタン)はトークンで色を引いているので、
+   面の上でトークンだけ上書きして切り替える。ツールバーやチャットは暗いまま。 */
+.rf-stage.theme-sepia {
+  --text: #433422;
+  --text-sub: #6b5a43;
+  --text-dim: #857560;
+  --panel-2: #eadfc6;
+  --panel-3: #e1d3b4;
+  --border: #d6c7a6;
+  --accent: #2f6db5;
+  background: #f4ecd8;
+}
+.rf-stage.theme-light {
+  --text: #222224;
+  --text-sub: #55555b;
+  --text-dim: #7e7e84;
+  --panel-2: #efeff1;
+  --panel-3: #e5e5e8;
+  --border: #d9d9de;
+  --accent: #2f6db5;
+  background: #fafaf8;
+}
 .rf-viewport {
   flex: 0 0 auto;
   margin-bottom: 24px;
@@ -1266,10 +1312,8 @@ input[type='checkbox']:focus-visible {
 .rf-flow.is-vertical {
   writing-mode: vertical-rl;
 }
-/* 書体「明朝」。Windows 標準の游明朝を優先する(コードは .book-md code の等幅のまま)。 */
-.rf-flow.is-mincho {
-  font-family: 'Yu Mincho', YuMincho, 'Hiragino Mincho ProN', 'Noto Serif JP', serif;
-}
+/* 本文の書体は TextView が font-family を直接付ける(一覧は textFonts.ts)。
+   コードは .book-md code の等幅のまま。 */
 /* 見出しの直後・図の途中では画面を分けない。 */
 .rf-heading {
   break-after: avoid;
@@ -1529,6 +1573,46 @@ input[type='checkbox']:focus-visible {
   font-size: 12px;
   color: var(--text-sub);
   white-space: nowrap;
+}
+/* 書体のプルダウン。ボタンは読み方向のセレクト(.reader-dir)と同じ見た目、
+   メニューは .ex-popup を下に開き、各項目をその書体で見せる。 */
+.font-picker {
+  position: relative;
+}
+.font-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.font-picker-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+}
+.font-picker-caret {
+  font-size: 10px;
+  color: var(--text-sub);
+}
+.font-picker-menu {
+  top: calc(100% + 4px);
+  right: auto;
+  left: 0;
+}
+.font-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.font-picker-item.is-current {
+  background: var(--panel-3);
+}
+.font-picker-check {
+  width: 12px;
+  color: var(--text-sub);
 }
 
 /* ---- タグ編集行(リーダー) ---- */
@@ -1964,12 +2048,14 @@ input[type='checkbox']:focus-visible {
   background: rgba(255, 255, 255, 0.3);
   border-radius: 2px;
 }
+/* 現在地のつまみ(白い円)。ドラッグ中は指している位置へ動く。 */
 .scrubber-thumb {
   position: absolute;
   top: 50%;
   width: 14px;
   height: 14px;
   border-radius: 50%;
+  background: #fff;
   transform: translate(-50%, -50%);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   pointer-events: none;

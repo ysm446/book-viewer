@@ -64,6 +64,19 @@ export function ReaderChat({
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  // 見出しの ? で開く使い方の案内。
+  const [hintOpen, setHintOpen] = useState(false)
+  // 開いている間の Escape は案内だけ閉じる(リーダーの「一覧へ戻る」より先に捕まえる)。
+  useEffect(() => {
+    if (!hintOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setHintOpen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [hintOpen])
   const [error, setError] = useState<string | null>(null)
   const [includeImage, setIncludeImage] = useState(false)
   const [pageFocus, setPageFocus] = useState(false)
@@ -286,6 +299,26 @@ export function ReaderChat({
     <div className="reader-chat" style={width !== undefined ? { flexBasis: width } : undefined}>
       <div className="reader-chat-head">
         <span className="reader-chat-title">✦ この本について質問</span>
+        {/* 使い方の案内。会話エリアを狭めないよう、? を押したときだけポップアップで出す。 */}
+        <div className="chat-hint">
+          <button
+            className="icon-btn chat-hint-btn"
+            onClick={() => setHintOpen((v) => !v)}
+            aria-label="使い方"
+            aria-expanded={hintOpen}
+            title="使い方"
+          >
+            ?
+          </button>
+          {hintOpen && (
+            <>
+              <div className="popup-backdrop" onClick={() => setHintOpen(false)} />
+              <div className="ex-popup chat-hint-popup" role="note">
+                この本について質問にお答えします。いま開いているページまでの本文をもとに答えます（先のページは読みません）。下の候補から選ぶか、質問を入力してください。
+              </div>
+            </>
+          )}
+        </div>
         <button
           className="btn reader-chat-clear"
           onClick={clearChat}
@@ -309,11 +342,6 @@ export function ReaderChat({
           }
         }}
       >
-        {messages.length === 0 && (
-          <div className="reader-chat-intro">
-            この本について質問にお答えします。いま開いているページまでの本文をもとに答えます（先のページは読みません）。下の候補から選ぶか、質問を入力してください。
-          </div>
-        )}
         {messages.map((m, i) => {
           const streaming = busy && i === messages.length - 1 && m.role === 'assistant'
           return (

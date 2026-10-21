@@ -101,6 +101,8 @@ const api = {
   /** 保存先をエクスプローラで開く(該当ファイルを選択した状態)。 */
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke('shell:showItemInFolder', path),
+  /** フォルダをエクスプローラで開く(フォルダ以外は失敗する)。 */
+  openFolder: (path: string): Promise<void> => ipcRenderer.invoke('shell:openFolder', path),
   /** main が横取りしたキー(F9 / F12 / Shift+F12)の通知を購読する。戻り値で解除。 */
   onShortcut: (callback: (name: ShortcutName) => void): (() => void) => {
     const listener = (_e: unknown, name: ShortcutName): void => callback(name)

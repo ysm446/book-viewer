@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import * as os from 'os'
 import { exec } from 'child_process'
+import { statSync } from 'fs'
 import { BackendProcess } from './backend'
 import { captureWindow, savePages, type SavePageInput } from './screenshot'
 import { getSettings, setSettings, type AppSettingsPatch } from './settings'
@@ -244,6 +245,18 @@ function registerIpc(): void {
 
   // 保存先をエクスプローラで開く(該当ファイルを選択した状態)。
   ipcMain.handle('shell:showItemInFolder', (_e, path: string) => shell.showItemInFolder(path))
+  // フォルダをエクスプローラで開く。openPath はファイルを渡すと実行してしまうので、フォルダだけ受け付ける。
+  ipcMain.handle('shell:openFolder', async (_e, path: string) => {
+    let isDir = false
+    try {
+      isDir = statSync(path).isDirectory()
+    } catch {
+      // 存在しない
+    }
+    if (!isDir) throw new Error('フォルダが見つかりません')
+    const err = await shell.openPath(path)
+    if (err) throw new Error(err)
+  })
 }
 
 // 多重起動を防ぐ(settings.json や library.db の同時書き込みを避ける)。

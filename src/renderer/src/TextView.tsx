@@ -26,6 +26,7 @@ import {
   type Work
 } from './api'
 import { Markdown } from './Markdown'
+import { textFontOf, type TextFont } from './textFonts'
 
 interface Props {
   root: string
@@ -42,14 +43,16 @@ interface Props {
   fontSize: number
   /** 本文の書体 */
   font: TextFont
+  /** 本文の面の配色(黒 / セピア / 白) */
+  theme: TextTheme
   /** ページ送りのフェードを出すか */
   animate: boolean
   /** 文字起こしのエンジン(設定) */
   engine: TranscribeEngine
 }
 
-/** 本文の書体。ゴシックは UI と同じ書体、明朝は游明朝など。 */
-export type TextFont = 'gothic' | 'mincho'
+/** 本文の面の配色。dark は既定の暗い面、sepia / light は styles.css の .rf-stage.theme-*。 */
+export type TextTheme = 'dark' | 'sepia' | 'light'
 
 /** リーダーからのページ送り(キーボード)を受ける。 */
 export interface TextViewHandle {
@@ -167,7 +170,7 @@ type Pending = 'first' | 'last' | { block: number } | null
  * 読書位置は原本のページ番号でリーダーと共有する。文字起こしと本文の手直しは原本のページ単位。
  */
 export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
-  { root, work, page, onPageChange, vertical, columns, fontSize, font, animate, engine },
+  { root, work, page, onPageChange, vertical, columns, fontSize, font, theme, animate, engine },
   ref
 ): JSX.Element {
   const [content, setContent] = useState<BookContent | null>(null)
@@ -323,6 +326,19 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const [screens, setScreens] = useState(1)
   // 図の読み込みや移動の指示で、組んだ結果を測り直すための合図。
   const [tick, setTick] = useState(0)
+  // 書体。同梱の書体は使われてから読み込まれるので、読み込みが済んだら測り直す
+  // (読み込み前の代わりの書体で組んだままにしない)。
+  const fontFamily = textFontOf(font).family
+  useEffect(() => {
+    if (!fontFamily) return
+    let alive = true
+    void document.fonts.load(`16px ${fontFamily}`, 'あ').then(() => {
+      if (alive) setTick((t) => t + 1)
+    })
+    return () => {
+      alive = false
+    }
+  }, [fontFamily])
   const stageRef = useRef<HTMLDivElement | null>(null)
   const flowRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
@@ -666,7 +682,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
           </div>
         </div>
       ) : (
-        <div className="rf-stage" ref={stageRef} onWheel={onWheel}>
+        <div className={`rf-stage theme-${theme}`} ref={stageRef} onWheel={onWheel}>
           {!content ? (
             <div className="text-empty">読み込み中…</div>
           ) : !blocks || blocks.length === 0 ? (
@@ -689,7 +705,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                 <div className="rf-viewport" style={{ width: geo.width, height: geo.height }}>
                   <div
                     ref={flowRef}
-                    className={`rf-flow book-md ${vertical ? 'is-vertical' : ''} ${font === 'mincho' ? 'is-mincho' : ''}`}
+                    className={`rf-flow book-md ${vertical ? 'is-vertical' : ''}`}
                     style={
                       {
                         width: geo.width,
@@ -697,6 +713,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         columnCount: geo.columns,
                         columnGap: GAP,
                         fontSize,
+                        fontFamily: fontFamily ?? undefined,
                         transform: vertical ? `translateY(${-shift}px)` : `translateX(${-shift}px)`,
                         '--rf-w': `${(geo.width - GAP * (geo.columns - 1)) / geo.columns}px`,
                         '--rf-h': `${geo.height}px`
