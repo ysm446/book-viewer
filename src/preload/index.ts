@@ -10,6 +10,7 @@ export interface SystemResources {
 }
 
 export interface AppSettings {
+  theme: 'dark' | 'light' | 'sepia'
   pageMode: 'single' | 'double'
   singleWhenLandscape: boolean
   coverAlone: boolean

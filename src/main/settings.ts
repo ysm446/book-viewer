@@ -2,8 +2,13 @@ import { app } from 'electron'
 import { join, dirname } from 'path'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 
+/** アプリの配色テーマ。 */
+export type AppTheme = 'dark' | 'light' | 'sepia'
+
 /** アプリ全体の既定設定。本ごとの上書きは DB 側(page_direction)で持つ。 */
 export interface AppSettings {
+  /** 配色テーマ(黒 / 白 / セピア) */
+  theme: AppTheme
   /** 表示モード: 単ページ / 見開き2ページ */
   pageMode: 'single' | 'double'
   /** 見開き時、横長(横>縦)の画像は単独表示する */
@@ -68,6 +73,7 @@ const LEGACY_CHAT_SYSTEM_PROMPTS = [
 ]
 
 const DEFAULTS: AppSettings = {
+  theme: 'dark',
   pageMode: 'single',
   singleWhenLandscape: true,
   coverAlone: false,

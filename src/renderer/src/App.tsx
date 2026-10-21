@@ -137,6 +137,17 @@ export function App(): JSX.Element {
     setToast({ id: Date.now(), message, path, error })
   }, [])
   const closeToast = useCallback(() => setToast(null), [])
+  // 配色テーマを <html data-theme> に当てる。次回起動時に最初から当てられるよう localStorage にも覚える。
+  const theme = settings?.theme
+  useEffect(() => {
+    if (!theme) return
+    document.documentElement.dataset.theme = theme
+    try {
+      localStorage.setItem('appTheme', theme)
+    } catch {
+      // 覚えられなくても今の画面には当たっている
+    }
+  }, [theme])
   // 本の取り込みダイアログ(候補と、元ファイルの扱いの初期値)。
   const [importState, setImportState] = useState<{
     candidates: ImportCandidate[]

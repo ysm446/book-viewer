@@ -51,8 +51,8 @@ interface Props {
   engine: TranscribeEngine
 }
 
-/** 本文の面の配色。dark は既定の暗い面、sepia / light は styles.css の .rf-stage.theme-*。 */
-export type TextTheme = 'dark' | 'sepia' | 'light'
+/** 本文の面の配色。auto はアプリのテーマのまま、ほかは styles.css の .rf-stage.theme-* で差し替える。 */
+export type TextTheme = 'auto' | 'dark' | 'sepia' | 'light'
 
 /** リーダーからのページ送り(キーボード)を受ける。 */
 export interface TextViewHandle {
@@ -728,7 +728,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
           </div>
         </div>
       ) : (
-        <div className={`rf-stage theme-${theme}`} ref={stageRef} onWheel={onWheel}>
+        <div
+          className={`rf-stage ${theme === 'auto' ? '' : `theme-${theme}`}`}
+          ref={stageRef}
+          onWheel={onWheel}
+        >
           {!content ? (
             <div className="text-empty">読み込み中…</div>
           ) : !blocks || blocks.length === 0 ? (

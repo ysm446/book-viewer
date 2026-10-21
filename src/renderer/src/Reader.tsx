@@ -46,8 +46,9 @@ const TEXT_LAYOUTS: { value: TextLayout; label: string }[] = [
   { value: 'vertical', label: '縦書き' }
 ]
 
-/** テキスト表示の本文の面の配色。 */
+/** テキスト表示の本文の面の配色(テーマどおり = アプリのテーマのまま)。 */
 const TEXT_THEMES: { value: TextTheme; label: string }[] = [
+  { value: 'auto', label: 'テーマどおり' },
   { value: 'dark', label: '黒' },
   { value: 'sepia', label: 'セピア' },
   { value: 'light', label: '白' }
@@ -69,9 +70,18 @@ interface TextPrefs {
   layout: TextLayout
   size: number
   font: TextFont
-  theme: TextTheme
+  surface: TextTheme
+  /** 旧形式(アプリのテーマが無かった頃の背景。黒は既定の意味だった)。読むだけ */
+  theme?: string
 }
 const TEXT_PREFS_STORE = 'readerTextPrefs'
+
+/** 本文の背景の保存値を読む。旧形式の黒は「既定」の意味だったので、テーマどおりとして引き継ぐ。 */
+function parseTextTheme(surface: unknown, legacy: unknown): TextTheme | undefined {
+  if (surface === 'auto' || surface === 'dark' || surface === 'sepia' || surface === 'light') return surface
+  if (legacy === 'sepia' || legacy === 'light') return legacy
+  return undefined
+}
 
 function loadBookTextPrefs(workId: string): Partial<TextPrefs> {
   try {
@@ -263,12 +273,14 @@ export function Reader({
     localStorage.setItem('readerTextFont', textFont)
   }, [textFont])
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
-  const [textTheme, setTextTheme] = useState<TextTheme>(() => {
-    const v = bookPrefs.theme ?? localStorage.getItem('readerTextTheme')
-    return v === 'sepia' || v === 'light' ? v : 'dark'
-  })
+  const [textTheme, setTextTheme] = useState<TextTheme>(
+    () =>
+      parseTextTheme(bookPrefs.surface, bookPrefs.theme) ??
+      parseTextTheme(localStorage.getItem('readerTextSurface'), localStorage.getItem('readerTextTheme')) ??
+      'auto'
+  )
   useEffect(() => {
-    localStorage.setItem('readerTextTheme', textTheme)
+    localStorage.setItem('readerTextSurface', textTheme)
   }, [textTheme])
   // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
   const prefsTouched = useRef(false)
@@ -277,11 +289,11 @@ export function Reader({
     if (patch.layout !== undefined) setTextLayout(patch.layout)
     if (patch.size !== undefined) setTextSize(patch.size)
     if (patch.font !== undefined) setTextFont(patch.font)
-    if (patch.theme !== undefined) setTextTheme(patch.theme)
+    if (patch.surface !== undefined) setTextTheme(patch.surface)
   }
   useEffect(() => {
     if (!prefsTouched.current) return
-    saveBookTextPrefs(work.id, { layout: textLayout, size: textSize, font: textFont, theme: textTheme })
+    saveBookTextPrefs(work.id, { layout: textLayout, size: textSize, font: textFont, surface: textTheme })
   }, [work.id, textLayout, textSize, textFont, textTheme])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
@@ -736,7 +748,7 @@ export function Reader({
                     <button
                       key={t.value}
                       className={`seg-btn ${textTheme === t.value ? 'seg-active' : ''}`}
-                      onClick={() => changeTextPrefs({ theme: t.value })}
+                      onClick={() => changeTextPrefs({ surface: t.value })}
                       title="テキスト表示の本文の背景と文字の色"
                     >
                       {t.label}

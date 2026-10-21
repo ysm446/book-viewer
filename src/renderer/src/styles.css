@@ -8,7 +8,12 @@
   font-display: swap;
 }
 
-:root {
+/* ---- 配色テーマ ----
+   設定 > 表示 の「テーマ」(黒 / 白 / セピア)。<html data-theme> で切り替える(既定は黒)。
+   テキスト表示の本文の面(.rf-stage)は本ごとに別の配色を選べるので、同じトークンの組を
+   .rf-stage.theme-* にも当てる(面の中だけトークンが差し替わる)。色は必ずトークンで引くこと。 */
+:root,
+.rf-stage.theme-dark {
   --bg: #1c1c1d;
   --panel: #242425;
   --panel-2: #2c2c2e;
@@ -16,14 +21,94 @@
   --panel-head: #202021;
   --input-bg: #1d1d1e;
   --border: #313134;
+  --border-strong: #55565c;
   --text: #d4d4d8;
   --text-sub: #a1a1a6;
   --text-dim: #727277;
   --accent: #4c8de5;
+  --accent-hover: #5d99e8;
   --accent-soft: rgba(76, 141, 229, 0.14);
   --danger: #ff8a8a;
+  --danger-fill: #c0392b;
+  --danger-border: #7f3a3a;
   --warn: #e5b04c;
+  --ok: #7bd88f;
+  /* 細い計器・進み具合のトラック */
+  --track: rgba(255, 255, 255, 0.1);
+  /* リーダーの舞台(ページ画像の周り)と、テキスト表示の本文の面 */
+  --stage: #151516;
+  --reading-bg: #151516;
+  --scroll-thumb: #3d3d40;
+  --scroll-thumb-hover: #4e4e52;
+  --shadow-popup: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
+}
+:root[data-theme='light'],
+.rf-stage.theme-light {
+  --bg: #f0f0f2;
+  --panel: #ffffff;
+  --panel-2: #f2f2f4;
+  --panel-3: #e4e4e8;
+  --panel-head: #f7f7f8;
+  --input-bg: #ffffff;
+  --border: #d9d9de;
+  --border-strong: #b1b1b8;
+  --text: #222224;
+  --text-sub: #55555b;
+  --text-dim: #707076;
+  --accent: #2f6db5;
+  --accent-hover: #265c9a;
+  --accent-soft: rgba(47, 109, 181, 0.12);
+  --danger: #c0392b;
+  --danger-fill: #c0392b;
+  --danger-border: #e3a7a0;
+  --warn: #9a6400;
+  --ok: #2e7d32;
+  --track: rgba(0, 0, 0, 0.1);
+  --stage: #e5e5e8;
+  --reading-bg: #fafaf8;
+  --scroll-thumb: #c4c4ca;
+  --scroll-thumb-hover: #a9a9b0;
+  --shadow-popup: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.16);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.2);
+  --backdrop: rgba(0, 0, 0, 0.3);
+  color-scheme: light;
+}
+:root[data-theme='sepia'],
+.rf-stage.theme-sepia {
+  --bg: #ebe2cd;
+  --panel: #f5eedd;
+  --panel-2: #eee4cd;
+  --panel-3: #e3d5b6;
+  --panel-head: #f0e7d2;
+  --input-bg: #fbf7ec;
+  --border: #d6c6a4;
+  --border-strong: #ae9a74;
+  --text: #3d3022;
+  --text-sub: #65543e;
+  --text-dim: #7a6953;
+  --accent: #2f6db5;
+  --accent-hover: #265c9a;
+  --accent-soft: rgba(47, 109, 181, 0.12);
+  --danger: #b3261e;
+  --danger-fill: #c0392b;
+  --danger-border: #d9a48f;
+  --warn: #8a5800;
+  --ok: #2e6b30;
+  --track: rgba(61, 48, 34, 0.12);
+  --stage: #e2d7bf;
+  --reading-bg: #f4ecd8;
+  --scroll-thumb: #cbb994;
+  --scroll-thumb-hover: #b6a37c;
+  --shadow-popup: 0 8px 24px rgba(61, 48, 34, 0.16);
+  --shadow-toast: 0 8px 28px rgba(61, 48, 34, 0.18);
+  --shadow-modal: 0 12px 40px rgba(61, 48, 34, 0.22);
+  --backdrop: rgba(40, 30, 20, 0.3);
+  color-scheme: light;
 }
 
 * {
@@ -148,13 +233,13 @@ input[type='checkbox']:focus-visible {
   color: #fff;
 }
 .btn-primary:hover:not(:disabled) {
-  background: #5d99e8;
+  background: var(--accent-hover);
 }
 
 /* トグルの ON はニュートラルな「押し込み」表現(青はモデル状態などに譲る) */
 .btn-active {
   background: var(--panel-3);
-  border-color: #55565c;
+  border-color: var(--border-strong);
   color: var(--text);
 }
 .btn-active:hover:not(:disabled) {
@@ -192,10 +277,10 @@ input[type='checkbox']:focus-visible {
   background: var(--panel-2);
 }
 .status-ready {
-  color: #7bd88f;
+  color: var(--ok);
 }
 .status-error {
-  color: #ff8a8a;
+  color: var(--danger);
 }
 
 /* ---- 分割レイアウト ---- */
@@ -258,7 +343,7 @@ input[type='checkbox']:focus-visible {
   height: 3px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--track);
 }
 .res-fill {
   display: block;
@@ -357,7 +442,7 @@ input[type='checkbox']:focus-visible {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-popup);
 }
 .root-recent-item {
   display: block;
@@ -538,7 +623,7 @@ input[type='checkbox']:focus-visible {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-popup);
 }
 .ex-popup-item {
   display: block;
@@ -565,7 +650,7 @@ input[type='checkbox']:focus-visible {
   margin: 4px 0;
 }
 .ex-popup-danger {
-  color: #ff8a8a;
+  color: var(--danger);
 }
 
 /* ---- ファイル名変更モーダル ---- */
@@ -646,7 +731,7 @@ input[type='checkbox']:focus-visible {
   height: 4px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--track);
 }
 .sbq-bar-fill {
   display: block;
@@ -690,7 +775,7 @@ input[type='checkbox']:focus-visible {
 }
 .queue-x:hover,
 .queue-clear:hover {
-  background: #c0392b;
+  background: var(--danger-fill);
   color: #fff;
 }
 .ex-thumb {
@@ -760,7 +845,7 @@ input[type='checkbox']:focus-visible {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: #151516;
+  background: var(--stage);
 }
 .viewer-empty {
   position: absolute;
@@ -778,7 +863,7 @@ input[type='checkbox']:focus-visible {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  background: #151516;
+  background: var(--stage);
 }
 .reader-bar {
   display: flex;
@@ -848,6 +933,8 @@ input[type='checkbox']:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* 中のボタンは 26px だが、高さは 30px のコントロールがある .text-toolbar と同じ 47px に揃える。 */
+  min-height: 47px;
   padding: 8px 12px;
   background: var(--panel-head);
   border-bottom: 1px solid var(--border);
@@ -880,17 +967,24 @@ input[type='checkbox']:focus-visible {
   user-select: text;
   cursor: auto;
 }
-/* 見出しの ? で開く使い方の案内(.ex-popup を右寄せで下に開く)。 */
+/* 見出しの題名にマウスを乗せると出す使い方の案内(.ex-popup を題名の下に左寄せで開く)。 */
 .chat-hint {
   position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
 }
-.chat-hint-btn {
-  font-size: 13px;
-  color: var(--text-sub);
+.chat-hint .reader-chat-title {
+  cursor: help;
+}
+.chat-hint .reader-chat-title:focus-visible {
+  outline: none;
+  text-decoration: underline;
 }
 .chat-hint-popup {
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
+  right: auto;
   width: 260px;
   padding: 10px 12px;
   font-size: 12px;
@@ -1279,6 +1373,8 @@ input[type='checkbox']:focus-visible {
    大きさ・段の数・ずらす量は TextView が計算して style で渡す。スクロールはさせない。 */
 .rf-stage {
   position: relative;
+  background: var(--reading-bg);
+  color: var(--text);
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1287,29 +1383,9 @@ input[type='checkbox']:focus-visible {
   overflow: hidden;
   user-select: text;
 }
-/* 本文の面の配色(表示設定の「背景」: 黒 / セピア / 白)。黒は既定のまま。
-   面の中(本文・ルビ・表・コード・位置の表示・案内のボタン)はトークンで色を引いているので、
-   面の上でトークンだけ上書きして切り替える。ツールバーやチャットは暗いまま。 */
-.rf-stage.theme-sepia {
-  --text: #433422;
-  --text-sub: #6b5a43;
-  --text-dim: #857560;
-  --panel-2: #eadfc6;
-  --panel-3: #e1d3b4;
-  --border: #d6c7a6;
-  --accent: #2f6db5;
-  background: #f4ecd8;
-}
-.rf-stage.theme-light {
-  --text: #222224;
-  --text-sub: #55555b;
-  --text-dim: #7e7e84;
-  --panel-2: #efeff1;
-  --panel-3: #e5e5e8;
-  --border: #d9d9de;
-  --accent: #2f6db5;
-  background: #fafaf8;
-}
+/* 本文の面の配色は、表示設定の「背景」で本ごとに選べる(既定は「テーマどおり」で、アプリのテーマのまま)。
+   黒 / セピア / 白を選んだ本は .rf-stage.theme-* でトークンの組を差し替える(定義は冒頭の配色テーマ)。
+   面の中(本文・ルビ・表・コード・位置の表示・案内のボタン)はトークンで色を引くこと。 */
 .rf-viewport {
   flex: 0 0 auto;
   margin-bottom: 24px;
@@ -1659,7 +1735,7 @@ input[type='checkbox']:focus-visible {
   cursor: pointer;
 }
 .tag-chip-del:hover {
-  background: #c0392b;
+  background: var(--danger-fill);
   color: #fff;
 }
 .tag-input {
@@ -1705,7 +1781,7 @@ input[type='checkbox']:focus-visible {
 }
 .reader-info-error {
   font-size: 12px;
-  color: #ff8a8a;
+  color: var(--danger);
 }
 .analyze-bar {
   flex: 1;
@@ -2009,11 +2085,11 @@ input[type='checkbox']:focus-visible {
   flex-wrap: wrap;
 }
 .ping-ok {
-  color: #7bd88f;
+  color: var(--ok);
   font-size: 12px;
 }
 .ping-ng {
-  color: #ff8a8a;
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -2227,7 +2303,7 @@ input[type='checkbox']:focus-visible {
   opacity: 1;
 }
 .reader-bm-del:hover {
-  background: #c0392b;
+  background: var(--danger-fill);
 }
 
 /* ---- スクロールバー ---- */
@@ -2235,11 +2311,11 @@ input[type='checkbox']:focus-visible {
   width: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3d3d40;
+  background: var(--scroll-thumb);
   border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4e4e52;
+  background: var(--scroll-thumb-hover);
 }
 
 /* ---- モデル読み込みバー(トップバー) ---- */
@@ -2277,12 +2353,12 @@ input[type='checkbox']:focus-visible {
 @keyframes model-glow {
   0%,
   100% {
-    border-color: rgba(76, 141, 229, 0.3);
-    box-shadow: 0 0 2px rgba(76, 141, 229, 0.08);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
   }
   50% {
-    border-color: rgba(76, 141, 229, 0.55);
-    box-shadow: 0 0 5px rgba(76, 141, 229, 0.2);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
   }
 }
 .model-spinner {
@@ -2307,15 +2383,15 @@ input[type='checkbox']:focus-visible {
   height: 30px;
   padding: 0 10px 0 12px;
   background: var(--accent-soft);
-  border: 1px solid rgba(76, 141, 229, 0.5);
-  box-shadow: 0 0 4px rgba(76, 141, 229, 0.18);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
   border-radius: 6px;
 }
 .model-switch:hover {
-  background: rgba(76, 141, 229, 0.22);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .model-caret {
   color: var(--text-dim);
@@ -2377,7 +2453,7 @@ input[type='checkbox']:focus-visible {
 .mp-error {
   padding: 8px 16px;
   font-size: 12px;
-  color: #ff8a8a;
+  color: var(--danger);
 }
 .mp-list {
   padding: 6px;
@@ -2438,7 +2514,7 @@ input[type='checkbox']:focus-visible {
 }
 .mp-badge-active {
   color: var(--accent);
-  border-color: rgba(76, 141, 229, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .mp-name {
   font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
@@ -2602,7 +2678,7 @@ input[type='checkbox']:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop);
   border: 2px dashed var(--text-sub);
   border-radius: 8px;
   font-size: 16px;
@@ -2615,7 +2691,7 @@ input[type='checkbox']:focus-visible {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2625,7 +2701,7 @@ input[type='checkbox']:focus-visible {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-modal);
   max-height: 85vh;
   display: flex;
   flex-direction: column;
@@ -2814,7 +2890,7 @@ input[type='checkbox']:focus-visible {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-toast);
   overflow: hidden;
   animation: toast-in 0.16s ease-out;
 }
@@ -2825,7 +2901,7 @@ input[type='checkbox']:focus-visible {
   }
 }
 .toast.is-error {
-  border-color: #7f3a3a;
+  border-color: var(--danger-border);
 }
 .toast-body {
   flex: 1 1 auto;

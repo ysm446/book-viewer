@@ -195,6 +195,30 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
 
             <div className="settings-row">
               <div className="settings-label">
+                テーマ
+                <span className="settings-desc">アプリ全体の配色。テキスト表示の本文の背景は、本ごとに「表示」で変えられます</span>
+              </div>
+              <div className="seg">
+                {(
+                  [
+                    ['dark', '黒'],
+                    ['light', '白'],
+                    ['sepia', 'セピア']
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    className={`seg-btn ${(settings.theme ?? 'dark') === id ? 'seg-active' : ''}`}
+                    onClick={() => onChange({ theme: id })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
                 表示モード
                 <span className="settings-desc">ページの表示単位</span>
               </div>

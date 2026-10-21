@@ -106,7 +106,7 @@ export function ReaderChat({
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  // 見出しの ? で開く使い方の案内。
+  // 見出しの題名にマウスを乗せると出す使い方の案内。
   const [hintOpen, setHintOpen] = useState(false)
   // ネタバレ防止(本ごと)。本が変わったら、その本の設定を読み直す。
   const [spoilerGuard, setSpoilerGuard] = useState(() => loadSpoilerGuard(work.id))
@@ -359,7 +359,27 @@ export function ReaderChat({
   return (
     <div className="reader-chat" style={width !== undefined ? { flexBasis: width } : undefined}>
       <div className="reader-chat-head">
-        <span className="reader-chat-title">✦ この本について質問</span>
+        {/* 使い方の案内。会話エリアを狭めないよう、題名にマウスを乗せた(フォーカスした)ときだけ出す。 */}
+        <div
+          className="chat-hint"
+          onMouseEnter={() => setHintOpen(true)}
+          onMouseLeave={() => setHintOpen(false)}
+          onFocus={() => setHintOpen(true)}
+          onBlur={() => setHintOpen(false)}
+        >
+          <span className="reader-chat-title" tabIndex={0} aria-describedby="chat-hint-popup">
+            ✦ この本について質問
+          </span>
+          {hintOpen && (
+            <div id="chat-hint-popup" className="ex-popup chat-hint-popup" role="tooltip">
+              この本について質問にお答えします。
+              {spoilerGuard
+                ? 'いま開いているページまでの本文をもとに答えます（先のページは読みません）。'
+                : 'ネタバレ防止が OFF なので、先の章の要約や先のページも使って答えます。'}
+              下の候補から選ぶか、質問を入力してください。「ネタバレ防止」はこの本だけの切り替えです。
+            </div>
+          )}
+        </div>
         {/* ネタバレ防止(本ごと)。ON は今のページまで、OFF は先の章の要約・先のページの検索も使う。 */}
         <button
           className={`btn reader-chat-spoiler ${spoilerGuard ? 'btn-active' : ''}`}
@@ -373,30 +393,6 @@ export function ReaderChat({
         >
           ネタバレ防止
         </button>
-        {/* 使い方の案内。会話エリアを狭めないよう、? を押したときだけポップアップで出す。 */}
-        <div className="chat-hint">
-          <button
-            className="icon-btn chat-hint-btn"
-            onClick={() => setHintOpen((v) => !v)}
-            aria-label="使い方"
-            aria-expanded={hintOpen}
-            title="使い方"
-          >
-            ?
-          </button>
-          {hintOpen && (
-            <>
-              <div className="popup-backdrop" onClick={() => setHintOpen(false)} />
-              <div className="ex-popup chat-hint-popup" role="note">
-                この本について質問にお答えします。
-                {spoilerGuard
-                  ? 'いま開いているページまでの本文をもとに答えます（先のページは読みません）。'
-                  : 'ネタバレ防止が OFF なので、先の章の要約や先のページも使って答えます。'}
-                下の候補から選ぶか、質問を入力してください。「ネタバレ防止」はこの本だけの切り替えです。
-              </div>
-            </>
-          )}
-        </div>
         <button
           className="btn reader-chat-clear"
           onClick={clearChat}
