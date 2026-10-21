@@ -489,6 +489,20 @@ export interface ChatTurn {
   content: string
   /** 思考(reasoning)過程。表示用。送信時は除外する。 */
   reasoning?: string
+  /** 応答の材料にした本文(参照の表示用。送信時は除外する)。 */
+  sources?: ChatSources
+}
+
+/** チャットの応答の材料にした本文。ページは 0 始まり。 */
+export interface ChatSources {
+  /** 今のページ付近として渡した範囲 [最初, 最後]。本文が無ければ null。 */
+  nearby: [number, number] | null
+  /** 質問の語が出てくるページ(キーワード検索) */
+  keyword: number[]
+  /** 質問に近いページ(本文検索) */
+  search: number[]
+  /** 渡した章の要約の数 */
+  summaries: number
 }
 
 interface ChatOpts {
@@ -526,7 +540,11 @@ export async function chatAboutWorkStream(
   workId: string,
   messages: ChatTurn[],
   opts: ChatOpts | undefined,
-  handlers: { onReasoning?: (t: string) => void; onContent?: (t: string) => void },
+  handlers: {
+    onReasoning?: (t: string) => void
+    onContent?: (t: string) => void
+    onSources?: (s: ChatSources) => void
+  },
   signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch(api(`/works/${workId}/chat/stream`), {
@@ -556,13 +574,20 @@ export async function chatAboutWorkStream(
         void reader.cancel().catch(() => {})
         return
       }
-      let delta: { type?: string; text?: string }
+      let delta: { type?: string; text?: string } & Partial<ChatSources>
       try {
         delta = JSON.parse(payload)
       } catch {
         continue
       }
-      if (delta.type === 'reasoning' && delta.text) handlers.onReasoning?.(delta.text)
+      if (delta.type === 'sources') {
+        handlers.onSources?.({
+          nearby: delta.nearby ?? null,
+          keyword: delta.keyword ?? [],
+          search: delta.search ?? [],
+          summaries: delta.summaries ?? 0
+        })
+      } else if (delta.type === 'reasoning' && delta.text) handlers.onReasoning?.(delta.text)
       else if (delta.type === 'content' && delta.text) handlers.onContent?.(delta.text)
       else if (delta.type === 'error') throw new Error(delta.text || 'LLM エラー')
     }

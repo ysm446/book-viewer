@@ -55,7 +55,7 @@ def work_chat(work_id: str, body: ChatRequest) -> dict:
     """本について会話する(読んだ範囲の本文・章の要約・本文検索を文脈に、任意で現在ページ画像を添付)。"""
     r, base_url, archive_path = _chat_setup(work_id, body)
     try:
-        reply = chat.chat_about_work(
+        reply, sources = chat.chat_about_work(
             r,
             work_id,
             base_url,
@@ -71,7 +71,7 @@ def work_chat(work_id: str, body: ChatRequest) -> dict:
         )
     except llm.LlmError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    return {"reply": reply}
+    return {"reply": reply, "sources": sources}
 
 
 @router.post("/works/{work_id}/chat/stream")

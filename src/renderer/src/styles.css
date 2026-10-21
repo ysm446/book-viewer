@@ -916,6 +916,14 @@ input[type='checkbox']:focus-visible {
   align-self: stretch;
   color: var(--text);
 }
+/* 応答の材料にした本文(参照)。答えの下に小さく添える。 */
+.chat-sources {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .chat-md > :first-child {
   margin-top: 0;
 }

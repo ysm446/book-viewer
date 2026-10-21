@@ -5,11 +5,27 @@ import {
   getQueue,
   getIndexStatus,
   suggestChatQuestions,
+  type ChatSources,
   type ChatTurn,
   type IndexStatus,
   type Work
 } from './api'
 import { Markdown } from './Markdown'
+
+/** 応答の材料にした本文を 1 行で示す(答えが的外れなときに、何を見て答えたか分かるように)。 */
+function sourcesLabel(s: ChatSources): string {
+  const pages = (ps: number[]): string =>
+    [...ps]
+      .sort((a, b) => a - b)
+      .map((p) => `p.${p + 1}`)
+      .join(', ')
+  const parts: string[] = []
+  if (s.nearby) parts.push(`今のページ付近 p.${s.nearby[0] + 1}〜${s.nearby[1] + 1}`)
+  if (s.keyword.length > 0) parts.push(`語の一致 ${pages(s.keyword)}`)
+  if (s.search.length > 0) parts.push(`本文検索 ${pages(s.search)}`)
+  if (s.summaries > 0) parts.push(`章の要約 ${s.summaries} 章`)
+  return parts.length > 0 ? `参照: ${parts.join(' ・ ')}` : '参照: 本文なし'
+}
 
 interface ReaderChatProps {
   root: string
@@ -239,10 +255,11 @@ export function ReaderChat({
     setError(null)
     let content = ''
     let reasoning = ''
+    let sources: ChatSources | undefined
     const apply = (): void =>
       setMessages((m) => {
         const copy = [...m]
-        copy[copy.length - 1] = { role: 'assistant', content, reasoning }
+        copy[copy.length - 1] = { role: 'assistant', content, reasoning, sources }
         return copy
       })
     const controller = new AbortController()
@@ -262,6 +279,10 @@ export function ReaderChat({
           search: useSearch && searchReady ? { serverPath, modelsDir } : undefined
         },
         {
+          onSources: (s) => {
+            sources = s
+            apply()
+          },
           onReasoning: (t) => {
             reasoning += t
             apply()
@@ -356,6 +377,14 @@ export function ReaderChat({
                 )
               ) : (
                 streaming && <span className="chat-typing">考え中…</span>
+              )}
+              {m.role === 'assistant' && m.sources && m.content && (
+                <div
+                  className="chat-sources"
+                  title="この答えの材料として LLM に渡した本文(読んだ範囲のみ)。語の一致は質問の語がそのまま出てくるページ"
+                >
+                  {sourcesLabel(m.sources)}
+                </div>
               )}
             </div>
           )

@@ -1,6 +1,7 @@
 """本のチャット(リーダー横のチャットウィンドウ)。
 
-system には本の情報、読み終えた章の要約、質問に近い本文(本文検索)、今のページ付近の本文を入れる。
+system には本の情報、読み終えた章の要約、質問の語が出てくる本文(キーワード検索)、
+質問に近い本文(本文検索)、今のページ付近の本文を入れる。
 どれも「今開いているページまで」に限り、先の内容は渡さない(ネタバレ防止)。
 """
 
@@ -8,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import io
+import math
+import re
 from pathlib import Path
 
 from PIL import Image
@@ -108,19 +111,17 @@ def _search_context(
     search_opts: dict | None,
     budget: int,
     exclude_pages: set[int],
-) -> list[str]:
+) -> tuple[list[str], list[int]]:
     """最後の質問に近い本文のまとまりを、読んだ範囲(今のページまで)から探して並べる。
 
-    今のページ付近として別に渡すページ(exclude_pages)は除く。索引が無い・検索に失敗した
-    ときは空(会話は続ける)。
+    今のページ付近やキーワード検索で別に渡すページ(exclude_pages)は除く。索引が無い・検索に
+    失敗したときは空(会話は続ける)。戻り値は (本文, 使ったページ)。
     """
     if search_opts is None or budget <= 0:
-        return []
-    question = next(
-        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
-    )
+        return [], []
+    question = _last_question(messages)
     if not question.strip():
-        return []
+        return [], []
     try:
         hits = embedding.search(
             root,
@@ -132,16 +133,139 @@ def _search_context(
             exclude_pages=exclude_pages,
         )
     except Exception:  # noqa: BLE001 - 検索は補助なので、失敗しても会話は止めない
-        return []
+        return [], []
     out: list[str] = []
+    pages: list[int] = []
     used = 0
     for h in hits:
         text = f"--- p.{h['page'] + 1} ---\n{h['text']}"
         if out and used + len(text) > budget:
             break
         out.append(text)
+        pages.append(h["page"])
         used += len(text)
+    return out, pages
+
+
+# ---- キーワード検索(質問の語が文字どおり出てくるページ) --------------------------
+# ベクトル検索は意味の近さには強いが、山の名前・人名などの固有名詞を取りこぼしやすい。
+# 索引が無くても動くよう、読んだ範囲の本文から質問の語をそのまま探して補う。
+
+# 質問から拾う語: 「」『』で囲んだ語、漢字の連なり、カタカナの連なり、英数字の連なり(いずれも 2 文字以上)。
+_QUOTED_RE = re.compile(r"[「『]([^」』]{2,30})[」』]")
+_TERM_RE = re.compile(
+    r"[一-鿿㐀-䶿々〆ヵヶ]{2,}"
+    r"|[ァ-ヺー]{2,}"
+    r"|[A-Za-z0-9][A-Za-z0-9\-]+"
+    r"|[Ａ-Ｚａ-ｚ０-９]{2,}"
+)
+# 質問によく出るが、本文を探す手がかりにならない語。
+_STOP_TERMS = {
+    "本文", "内容", "説明", "意味", "理由", "場所", "場合", "部分", "全体", "要約", "作者", "著者",
+    "筆者", "本書", "今回", "最初", "最後", "前後", "以前", "以降", "具体", "具体例", "簡単", "詳細",
+    "特徴", "違い", "関係", "方法", "結論", "主張", "目的", "背景", "何故", "登場人物", "人物",
+    "要点", "概要", "感想", "解説", "ページ", "テーマ", "ポイント", "キーワード",
+}
+# 1 ページから見せる、語の前後の文字数と箇所の数。キーワード検索で拾うページの数。
+_KEYWORD_WINDOW = 200
+_KEYWORD_SPOTS = 2
+_KEYWORD_PAGES = 4
+
+
+def _question_terms(question: str) -> list[str]:
+    """質問から本文を探す語を取り出す(重複なし、出てきた順)。"""
+    terms = [m.group(1).strip() for m in _QUOTED_RE.finditer(question)]
+    terms += [t for t in _TERM_RE.findall(question) if t not in _STOP_TERMS]
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in terms:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
     return out
+
+
+def _snippets(text: str, terms: list[str]) -> str:
+    """本文のうち、語が出てくる箇所の前後だけを切り出す(離れた箇所は改行でつなぐ)。"""
+    spots = sorted({m.start() for t in terms for m in re.finditer(re.escape(t), text)})
+    spans: list[list[int]] = []
+    for pos in spots:
+        start, end = max(0, pos - _KEYWORD_WINDOW), min(len(text), pos + _KEYWORD_WINDOW)
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        elif len(spans) < _KEYWORD_SPOTS:
+            spans.append([start, end])
+    parts = [
+        ("…" if s > 0 else "") + text[s:e].strip() + ("…" if e < len(text) else "") for s, e in spans
+    ]
+    return "\n".join(parts)
+
+
+def keyword_search(
+    root: Path,
+    work_id: str,
+    question: str,
+    *,
+    max_page: int | None,
+    exclude_pages: set[int] | None = None,
+    k: int = _KEYWORD_PAGES,
+) -> list[dict]:
+    """質問の語が出てくるページを、読んだ範囲(max_page まで)から k 件返す。[{page, text}] をページ順に。
+
+    多くのページに出てくる語より、限られたページにしか出てこない語を重く見る。
+    """
+    terms = _question_terms(question)
+    if not terms:
+        return []
+    try:
+        texts = content.page_texts(root, work_id, max_page=max_page)
+    except transcribe.TranscribeError:
+        return []
+    plain = {p: transcribe.plain_for_llm(t) for p, t in texts.items()}
+    df = {t: sum(1 for x in plain.values() if t in x) for t in terms}
+    n = max(1, len(plain))
+    scored: list[tuple[float, int]] = []
+    for p, text in plain.items():
+        if exclude_pages and p in exclude_pages:
+            continue
+        score = sum(
+            math.log(1 + n / df[t]) * (1 + math.log(text.count(t)))
+            for t in terms
+            if df[t] and t in text
+        )
+        if score > 0:
+            scored.append((score, p))
+    top = sorted(p for _, p in sorted(scored, reverse=True)[:k])
+    return [{"page": p, "text": _snippets(plain[p], terms)} for p in top]
+
+
+def _last_question(messages: list[dict]) -> str:
+    return next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+
+
+def _keyword_context(
+    root: Path,
+    work_id: str,
+    messages: list[dict],
+    current_page: int | None,
+    budget: int,
+    exclude_pages: set[int],
+) -> tuple[list[str], list[int]]:
+    """最後の質問の語が出てくる本文を並べる。戻り値は (本文, 使ったページ)。"""
+    question = _last_question(messages)
+    if not question.strip() or budget <= 0:
+        return [], []
+    out: list[str] = []
+    pages: list[int] = []
+    used = 0
+    for h in keyword_search(root, work_id, question, max_page=current_page, exclude_pages=exclude_pages):
+        text = f"--- p.{h['page'] + 1} ---\n{h['text']}"
+        if out and used + len(text) > budget:
+            break
+        out.append(text)
+        pages.append(h["page"])
+        used += len(text)
+    return out, pages
 
 
 def _book_info(root: Path, work_id: str) -> list[str]:
@@ -169,15 +293,20 @@ def _build_chat_messages(
     system_prompt: str | None = None,
     context_chars: int | None = None,
     search_opts: dict | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     """本の情報と本文(読んだ範囲)を system に、会話履歴を並べた LLM メッセージ列を組む。
+
+    戻り値は (メッセージ列, 使った材料)。材料は画面の「参照」表示に使う
+    {nearby: [最初, 最後] | None, keyword: [ページ], search: [ページ], summaries: 章の数}(ページは 0 始まり)。
 
     - system_prompt: チャットの基本人格(空/None なら既定 _CHAT_SYSTEM)。
     - page_focus=True: 本文を踏まえつつ、現在ページの内容を中心に答えさせる。
     - include_image=True かつ最後がユーザー発言なら、現在ページ画像を添える(Vision モデルのみ)。
     - context_chars: 本文を渡す上限(文字数)。None なら CHAT_CONTEXT_CHARS。
     - search_opts: {server_path, models_dir}。本文検索の索引があれば、質問に近い本文を
-      読んだ範囲から探して加える(予算の 1/4 まで)。無ければ検索しない。
+      読んだ範囲から探して加える。無ければ検索しない。
+    - 質問の語が文字どおり出てくる本文(キーワード検索)はいつも探す。検索の分は予算の 1/4 までで、
+      キーワード検索を先に使う(本文検索と併用するときは 6 割まで)。
     """
     focus = (system_prompt or "").strip() or _CHAT_SYSTEM
     sections = ["## 本の情報", *_book_info(root, work_id)]
@@ -192,13 +321,25 @@ def _build_chat_messages(
     if summaries:
         sections += ["", "## 読み終えた章の要約", *summaries]
         budget -= sum(len(t) for t in summaries)
-    # 質問に近い本文(検索)の分を先に取り分けておく。
-    search_budget = budget // 4 if search_opts is not None else 0
+    # 質問の語・質問に近い本文(検索)の分を先に取り分けておく。
+    search_budget = budget // 4
     body, first, last = _reading_context(root, work_id, current_page, budget - search_budget)
-    found = _search_context(
-        root, work_id, messages, current_page, search_opts, search_budget,
-        set(range(first, last + 1)) if body else set(),
+    nearby = set(range(first, last + 1)) if body else set()
+    keyword_budget = int(search_budget * 0.6) if search_opts is not None else search_budget
+    keyword, keyword_pages = _keyword_context(
+        root, work_id, messages, current_page, keyword_budget, nearby
     )
+    found, found_pages = _search_context(
+        root,
+        work_id,
+        messages,
+        current_page,
+        search_opts,
+        search_budget - sum(len(t) for t in keyword),
+        nearby | set(keyword_pages),
+    )
+    if keyword:
+        sections += ["", "## 質問の語が出てくる本文(読んだ範囲から。語の前後だけ)", *keyword]
     if found:
         sections += ["", "## 質問に関係しそうな本文(読んだ範囲から検索。ページ順ではない)", *found]
     if body:
@@ -237,7 +378,13 @@ def _build_chat_messages(
             llm_messages.append(llm.image_message(content, _data_url(raw)))
         else:
             llm_messages.append({"role": role, "content": content})
-    return llm_messages
+    sources = {
+        "nearby": [first, last] if body else None,
+        "keyword": keyword_pages,
+        "search": found_pages,
+        "summaries": len(summaries),
+    }
+    return llm_messages, sources
 
 
 def chat_about_work(
@@ -254,9 +401,12 @@ def chat_about_work(
     think: bool | None = None,
     context_chars: int | None = None,
     search_opts: dict | None = None,
-) -> str:
-    """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。"""
-    llm_messages = _build_chat_messages(
+) -> tuple[str, dict]:
+    """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。
+
+    戻り値は (応答, 使った材料)。材料は _build_chat_messages を参照。
+    """
+    llm_messages, sources = _build_chat_messages(
         root,
         work_id,
         messages,
@@ -268,7 +418,7 @@ def chat_about_work(
         context_chars,
         search_opts,
     )
-    return llm.chat(base_url, llm_messages, model=model, think=think)
+    return llm.chat(base_url, llm_messages, model=model, think=think), sources
 
 
 def chat_about_work_stream(
@@ -286,8 +436,11 @@ def chat_about_work_stream(
     context_chars: int | None = None,
     search_opts: dict | None = None,
 ):
-    """chat_about_work のストリーム版。差分 dict を順に yield する。"""
-    llm_messages = _build_chat_messages(
+    """chat_about_work のストリーム版。差分 dict を順に yield する。
+
+    最初に {"type": "sources", ...使った材料} を 1 回 yield してから、応答の差分を流す。
+    """
+    llm_messages, sources = _build_chat_messages(
         root,
         work_id,
         messages,
@@ -299,6 +452,7 @@ def chat_about_work_stream(
         context_chars,
         search_opts,
     )
+    yield {"type": "sources", **sources}
     yield from llm.chat_stream(base_url, llm_messages, model=model, think=think)
 
 
