@@ -60,6 +60,36 @@ const TEXT_SIZES: { value: number; label: string }[] = [
   { value: 20, label: '特大' }
 ]
 
+/**
+ * 本ごとのテキスト表示の設定(組み方・文字サイズ・書体・背景)。localStorage に本の id ごとに持つ。
+ * その本で一度も変えていなければ、最後に使った設定(readerText* の各キー)で開く。
+ */
+interface TextPrefs {
+  layout: TextLayout
+  size: number
+  font: TextFont
+  theme: TextTheme
+}
+const TEXT_PREFS_STORE = 'readerTextPrefs'
+
+function loadBookTextPrefs(workId: string): Partial<TextPrefs> {
+  try {
+    return JSON.parse(localStorage.getItem(TEXT_PREFS_STORE) ?? '{}')[workId] ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function saveBookTextPrefs(workId: string, prefs: TextPrefs): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(TEXT_PREFS_STORE) ?? '{}')
+    all[workId] = prefs
+    localStorage.setItem(TEXT_PREFS_STORE, JSON.stringify(all))
+  } catch {
+    // 保存できなくても表示は続けられる
+  }
+}
+
 interface ReaderProps {
   root: string
   work: Work
@@ -209,35 +239,49 @@ export function Reader({
     localStorage.setItem('readerViewMode', viewMode)
   }, [viewMode])
   const [writingMode, setWritingMode] = useState<WritingMode>(work.writing_mode ?? 'horizontal')
-  // 本文の組み方・文字サイズ・書体・背景も本をまたいで引き継ぐ(縦書きの本を横書きで読む、など)。
+  // 本文の組み方・文字サイズ・書体・背景は本ごとに覚える(未設定の本は最後に使った設定で開く)。
+  const [bookPrefs] = useState(() => loadBookTextPrefs(work.id))
   const [textLayout, setTextLayout] = useState<TextLayout>(() => {
-    const v = localStorage.getItem('readerTextLayout')
+    const v = bookPrefs.layout ?? localStorage.getItem('readerTextLayout')
     return v === 'horizontal' || v === 'vertical' ? v : 'book'
   })
   useEffect(() => {
     localStorage.setItem('readerTextLayout', textLayout)
   }, [textLayout])
   const [textSize, setTextSize] = useState<number>(() => {
-    const v = Number(localStorage.getItem('readerTextSize'))
+    const v = Number(bookPrefs.size ?? localStorage.getItem('readerTextSize'))
     return TEXT_SIZES.some((s) => s.value === v) ? v : 16
   })
   useEffect(() => {
     localStorage.setItem('readerTextSize', String(textSize))
   }, [textSize])
   const [textFont, setTextFont] = useState<TextFont>(() =>
-    parseTextFont(localStorage.getItem('readerTextFont'))
+    parseTextFont(bookPrefs.font ?? localStorage.getItem('readerTextFont'))
   )
   useEffect(() => {
     localStorage.setItem('readerTextFont', textFont)
   }, [textFont])
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
   const [textTheme, setTextTheme] = useState<TextTheme>(() => {
-    const v = localStorage.getItem('readerTextTheme')
+    const v = bookPrefs.theme ?? localStorage.getItem('readerTextTheme')
     return v === 'sepia' || v === 'light' ? v : 'dark'
   })
   useEffect(() => {
     localStorage.setItem('readerTextTheme', textTheme)
   }, [textTheme])
+  // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
+  const prefsTouched = useRef(false)
+  function changeTextPrefs(patch: Partial<TextPrefs>): void {
+    prefsTouched.current = true
+    if (patch.layout !== undefined) setTextLayout(patch.layout)
+    if (patch.size !== undefined) setTextSize(patch.size)
+    if (patch.font !== undefined) setTextFont(patch.font)
+    if (patch.theme !== undefined) setTextTheme(patch.theme)
+  }
+  useEffect(() => {
+    if (!prefsTouched.current) return
+    saveBookTextPrefs(work.id, { layout: textLayout, size: textSize, font: textFont, theme: textTheme })
+  }, [work.id, textLayout, textSize, textFont, textTheme])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -619,7 +663,7 @@ export function Reader({
                     <button
                       key={l.value}
                       className={`seg-btn ${textLayout === l.value ? 'seg-active' : ''}`}
-                      onClick={() => setTextLayout(l.value)}
+                      onClick={() => changeTextPrefs({ layout: l.value })}
                       title="テキスト表示の本文を横書き / 縦書きのどちらで組むか（原本の書字方向とは別に選べます）"
                     >
                       {l.label}
@@ -634,7 +678,7 @@ export function Reader({
                     <button
                       key={t.value}
                       className={`seg-btn ${textSize === t.value ? 'seg-active' : ''}`}
-                      onClick={() => setTextSize(t.value)}
+                      onClick={() => changeTextPrefs({ size: t.value })}
                     >
                       {t.label}
                     </button>
@@ -668,7 +712,7 @@ export function Reader({
                             aria-checked={textFont === f.value}
                             style={{ fontFamily: f.family ?? undefined }}
                             onClick={() => {
-                              setTextFont(f.value)
+                              changeTextPrefs({ font: f.value })
                               setFontMenuOpen(false)
                             }}
                           >
@@ -690,7 +734,7 @@ export function Reader({
                     <button
                       key={t.value}
                       className={`seg-btn ${textTheme === t.value ? 'seg-active' : ''}`}
-                      onClick={() => setTextTheme(t.value)}
+                      onClick={() => changeTextPrefs({ theme: t.value })}
                       title="テキスト表示の本文の背景と文字の色"
                     >
                       {t.label}

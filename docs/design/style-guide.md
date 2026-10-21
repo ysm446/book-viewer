@@ -1,7 +1,7 @@
 # UI スタイルガイド
 
 作成日時: 2026-08-11 18:52
-更新日時: 2026-10-21 10:06
+更新日時: 2026-10-21 10:28
 
 このアプリ（book-viewer。旧 manga-viewer）の UI を一貫させるための唯一の基準。色・タイポグラフィ・余白・
 部品・状態表現・モーションをここに集約する。**UI を変更するときは必ずこの文書に従う。**
@@ -283,8 +283,8 @@ font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
 | `.icon-btn-lg` | `font-size 20px` | リーダーなど大きく押したい所 |
 
 - ボタン型のトグルは `.btn` + ON 時 `.btn-active`、`aria-pressed` を付ける。
-  チャットの送信オプション（このページについて / 画像 / 本文を検索）は `.chat-opt-btn` で `height 26px` / `12px` に詰め、
-  コンポーザーの中では OFF を枠なし・透明（hover で `--panel-2`）にする。
+  チャットの送信オプション（このページ / 画像 / 本文検索）は `.chat-opt-btn` で `height 26px` / `12px` に詰め、
+  コンポーザーの中では OFF を透明の面 + `--border` の薄い枠（hover で `--panel-2`）にし、押せる形は見せる。
 - hover は `:hover:not(:disabled)` で書く。disabled に hover 効果を出さない。
 - disabled は `opacity: .5` + `cursor: default`。
 - アイコン単体ボタンには必ず `title`（tooltip）か `aria-label` を付ける。
@@ -443,7 +443,7 @@ focus で `--accent` の枠）。要確認・手直し済みの印（`.text-page
 答えの下に、材料にした本文を `.chat-sources`（`11px` / `--text-dim` / `tabular-nums`、上に `6px`）で 1 行添える
 （「参照: 今のページ付近 p.155〜166 ・ 語の一致 p.128, p.140」）。補足なので読ませる文章の扱いにしない。
 
-コンポーザー内の「本文を検索」は他のオプションと同じボタン型トグル。索引が無い・
+コンポーザー内の「本文検索」は他のオプションと同じボタン型トグル。索引が無い・
 古い・作成中のときだけ、コンポーザーの上に `.chat-index`（`12px` / `--text-sub` の説明 + `26px` の小さなボタン）を出す。
 
 ### 5.14 スクラバー / オーバーレイ

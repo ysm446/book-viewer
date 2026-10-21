@@ -468,7 +468,7 @@ export function ReaderChat({
                 onClick={() => setPageFocus((v) => !v)}
                 title="ここまでの流れを踏まえつつ、現在ページの内容を中心に答えます"
               >
-                このページについて
+                このページ
               </button>
               <button
                 className={`btn chat-opt-btn ${includeImage ? 'btn-active' : ''}`}
@@ -485,7 +485,7 @@ export function ReaderChat({
                   onClick={() => setUseSearch((v) => !v)}
                   title={`読んだ範囲の本文から、質問に関係しそうな箇所を探して答えに使います（${index?.chunks} 件）`}
                 >
-                  本文を検索
+                  本文検索
                 </button>
               )}
             </div>

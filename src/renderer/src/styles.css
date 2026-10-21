@@ -1121,8 +1121,8 @@ input[type='checkbox']:focus-visible {
   flex-wrap: wrap;
   gap: 4px;
 }
-/* 送信時の文脈の付け外し(このページについて / 画像 / 本文を検索)。
-   OFF は枠なしの控えめな見た目、ON は .btn-active のグレー。 */
+/* 送信時の文脈の付け外し(このページ / 画像 / 本文検索)。
+   OFF は透明の面に薄い枠(押せる形は見せる)、ON は .btn-active のグレー。 */
 .chat-opt-btn {
   height: 26px;
   padding: 0 10px;
@@ -1131,7 +1131,7 @@ input[type='checkbox']:focus-visible {
 }
 .chat-opt-btn:not(.btn-active) {
   background: none;
-  border-color: transparent;
+  border-color: var(--border);
   color: var(--text-sub);
 }
 .chat-opt-btn:not(.btn-active):hover:not(:disabled) {
