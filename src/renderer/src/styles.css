@@ -46,7 +46,8 @@
   --backdrop: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
 }
-/* 白: まぶしくならないよう、真っ白を避けて面を少し落としたグレーにする。 */
+/* 白: まぶしくならないよう、真っ白を避けて面を少し落としたグレーにする。
+   本の背景(画像表示の舞台・テキスト表示の本文の面)は紙のような白(真っ白より少し落とす)にする。 */
 :root[data-theme='light'],
 .rf-stage.theme-light {
   --bg: #e2e2e5;
@@ -69,8 +70,8 @@
   --warn: #8a5800;
   --ok: #2a6e2e;
   --track: rgba(0, 0, 0, 0.1);
-  --stage: #d9d9dd;
-  --reading-bg: #ecebe6;
+  --stage: #f7f7f5;
+  --reading-bg: #f7f7f5;
   --scroll-thumb: #b9b9c0;
   --scroll-thumb-hover: #9e9ea6;
   --shadow-popup: 0 8px 24px rgba(0, 0, 0, 0.14);
