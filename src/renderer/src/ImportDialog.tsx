@@ -3,6 +3,7 @@ import {
   importBooks,
   type ImportCandidate,
   type ImportResult,
+  type BookLanguage,
   type ScanResult,
   type WritingMode
 } from './api'
@@ -15,6 +16,13 @@ interface Row {
   title: string
   author: string
   writingMode: WritingMode
+  language: BookLanguage
+}
+
+/** 書名から言語の初期値を推測する(かな・漢字が無く英字があれば英語)。 */
+function guessLanguage(title: string): BookLanguage {
+  if (/[぀-ヿ㐀-鿿]/.test(title)) return 'ja'
+  return /[A-Za-z]/.test(title) ? 'en' : 'ja'
 }
 
 interface Props {
@@ -32,7 +40,7 @@ function fmtSize(bytes: number): string {
     : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
-/** 本の取り込みダイアログ。書名・著者・書字方向を確認してから本フォルダを作る。 */
+/** 本の取り込みダイアログ。書名・著者・言語・書字方向を確認してから本フォルダを作る。 */
 export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }: Props): JSX.Element {
   const [rows, setRows] = useState<Row[]>(() =>
     candidates.map((c) => ({
@@ -41,7 +49,8 @@ export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }:
       checked: !c.error && !c.duplicate,
       title: c.title,
       author: '',
-      writingMode: 'horizontal'
+      writingMode: 'horizontal',
+      language: guessLanguage(c.title)
     }))
   )
   const [mode, setMode] = useState<Mode>(defaultMode)
@@ -74,7 +83,8 @@ export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }:
           path: r.candidate.path,
           title: r.title.trim(),
           author: r.author.trim(),
-          writing_mode: r.writingMode
+          writing_mode: r.writingMode,
+          language: r.language
         })),
         mode
       )
@@ -137,12 +147,27 @@ export function ImportDialog({ root, candidates, defaultMode, onClose, onDone }:
                         onChange={(e) => update(i, { author: e.target.value })}
                         aria-label="著者"
                       />
+                      <div className="seg" role="group" aria-label="本の言語">
+                        {(['ja', 'en'] as const).map((l) => (
+                          <button
+                            key={l}
+                            className={`seg-btn ${r.language === l ? 'seg-active' : ''}`}
+                            disabled={busy || !r.checked}
+                            // 英語の本は横書き
+                            onClick={() =>
+                              update(i, l === 'en' ? { language: l, writingMode: 'horizontal' } : { language: l })
+                            }
+                          >
+                            {l === 'ja' ? '日本語' : '英語'}
+                          </button>
+                        ))}
+                      </div>
                       <div className="seg" role="group" aria-label="書字方向">
                         {(['horizontal', 'vertical'] as const).map((m) => (
                           <button
                             key={m}
                             className={`seg-btn ${r.writingMode === m ? 'seg-active' : ''}`}
-                            disabled={busy || !r.checked}
+                            disabled={busy || !r.checked || (r.language === 'en' && m === 'vertical')}
                             onClick={() => update(i, { writingMode: m })}
                           >
                             {m === 'horizontal' ? '横書き' : '縦書き'}

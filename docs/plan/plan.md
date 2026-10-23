@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-10-21 10:13
+更新日時: 2026-10-23 08:52
 
 目的と完成形は [goals.md](goals.md)、現在の進捗は [progress.md](progress.md)。
 
@@ -60,6 +60,7 @@
 
 章立ては `chapters`(`[{title, page, level}]`、page は 0 始まり、level 1 = 章 / 2 = 節)と
 `chapters_updated_at` に入る(schema は 1 のまま。任意項目として追加)。
+本の言語は `language`(`"ja"` / `"en"`。無ければ日本語。schema は 1 のまま)。
 
 ## 取り込み
 
@@ -115,6 +116,28 @@
   句読点の無い長い段落(奥付・目次・参考文献・表の文字)はつながない。
 - API: `GET /api/works/{id}/text`、`GET|PUT /api/works/{id}/text/{n}`、`POST /api/works/{id}/transcribe`
   (`engine`: `yomitoku` / `vlm`)、`GET /api/works/{id}/figures/{name}`。
+
+### 英語の本(`language: "en"`)
+
+本ごとの言語で、文字起こしの後処理と Vision LLM の指示を切り替える。取り込みダイアログと「表示」で選ぶ
+(`PUT /api/works/{id}/language`、`works.language` 列)。取り込み時の初期値は書名から推測する。英語の本は横書き。
+エンジンの比較は [scripts/ocr-compare/](../../scripts/ocr-compare/README.md) の「洋書の結果」(The Giver の 4 ページで
+YomiToku + 英語の後処理が WER 0.7%、1 ページ 1 秒前後。Vision LLM は 0.06% だが 15 倍遅く図を切り抜かない)。
+
+- `layout_ocr.transcribe(raw, lang="en")`: 折り返しの行を空白でつなぐ(`_join`)。行末のハイフンで切れた語は、続きが
+  小文字ならハイフンを外してつなぐ(本来のハイフン fat-bellied も外れるが、画像からは区別できない)。大文字で続けば残す
+  (Pilot-in-Training)。ダッシュ(YomiToku は `―` で返す)は `—` にし、前後に空白を入れない。
+- 文の終わりは `SENTENCE_END_EN`(`. ! ? " ” ’ )`)、キャプションは `Figure 1` / `Table 2` などで始まる段落。
+- 飾り頭文字(本文の 1.8 倍より高い 1 字の段落)は右に続く段落の頭に付け直す。場面転換の飾り(`* * *`、`⁂`。YomiToku は
+  「米」と読むことがある)は `***`(区切り線)にして前後をつながない。箇条書きの点(`·` `・` `•`)は `- ` のリストにする。
+- YomiToku が見出しにしなかった章題(1 行で短く、本文より 1.2 倍以上大きい字)は見出しにし、文で終わる「見出し」は段落に戻す。
+- ルビの処理はしない。画面の端の写り込みなど、英数字を含まない 2 字以下の段落は捨てる。
+- ページをまたぐ段落のつなぎ(`transcribe.joins_previous(..., lang)`・`content.build_blocks(..., lang)`)も英語の
+  文の終わりで判定し、ページ末のハイフン(grand- / father)をつなぐ。`content.json` の指紋に言語を含める。
+- 残っている誤り: スモールキャピタル(`IMMEDIATELY`→`mmEDATELY`。確信度が低いので「要確認」に出る)、
+  飾り頭文字の後の空白(`ITwas`)。確信度の低い行だけ Vision LLM で読み直す組み合わせは今後。
+- 今後: 日本語訳(`content.json` のブロック単位で LLM に訳させ、文単位の対応を `translation/ja.json` に保存して、
+  表示で文 / 段落 / 節にまとめる)、マウスオーバーの辞書、言語をまたぐ本文検索(日本語の質問で英語の本文を探す)。
 
 ### アプリ用の本文(`content.json`)
 

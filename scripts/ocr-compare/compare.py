@@ -8,8 +8,10 @@
         --vlm-model path/to/model.gguf --vlm-mmproj path/to/mmproj.gguf
     backend/.venv/Scripts/python.exe scripts/ocr-compare/compare.py score
 
-作業フォルダは data/ocr-compare/(git 管理外。本の本文を含むため)。
-- pages.json   対象ページ [{"id", "zip", "index", "writing_mode"}]
+作業フォルダは data/ocr-compare/(git 管理外。本の本文を含むため)。--work で別のフォルダにできる
+(洋書の比較は data/ocr-compare-en/)。
+- pages.json   対象ページ [{"id", "zip", "index", "writing_mode", "lang"?}]
+  lang が "en" のページは、文字誤り率に加えて単語誤り率(WER)も出す(英語は語の区切りも大事なため)
 - gold/<id>.txt 正解(本文と見出しだけ。書名バー・ページ表示・ルビ・図のキャプションと図の中の文字は
   含めない。キャプションを出力したエンジンは、位置に関係なくその文字数ぶん挿入として数えられる)
 - images/<id>.png、out/<engine>/<id>.md、out/<engine>/_time.json は自動生成
@@ -72,7 +74,7 @@ def run_vlm(pages: list[dict], model: str, mmproj: str) -> None:
             t = time.time()
             out = llm.chat(
                 VLM_URL,
-                [llm.image_message(transcribe.prompt(p["writing_mode"]), transcribe._data_url(raw))],
+                [llm.image_message(transcribe.prompt(p["writing_mode"], p.get("lang", "ja")), transcribe._data_url(raw))],
                 temperature=0.0,
                 think=False,
             )
@@ -113,7 +115,7 @@ def run_bookviewer(pages: list[dict]) -> None:
     for p in pages:
         raw = (WORK / "images" / f"{p['id']}.png").read_bytes()
         t = time.time()
-        md, *_ = layout_ocr.transcribe(raw)
+        md, *_ = layout_ocr.transcribe(raw, p.get("lang", "ja"))
         times[p["id"]] = time.time() - t
         results[p["id"]] = md
         print("bookviewer", p["id"], round(times[p["id"]], 2), flush=True)
@@ -162,7 +164,33 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
-def levenshtein(a: str, b: str) -> int:
+def normalize_en(text: str) -> str:
+    """英語のページの文字の比較用。大文字小文字(スモールキャピタルは見分けにくい)とハイフンを無視する。
+
+    行末のハイフンで切れた語(some-thing)と、本来のハイフン(fat-bellied)は画像だけでは区別できないため、
+    ハイフンは除いて比べる。ダッシュは語の区切りとして空白にする。
+    """
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    # VLM の図の説明([図: A photograph of …])は本文ではないので比べない
+    text = re.sub(r"\[図[:：][^\]]*\]", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[‘’`]", "'", text)
+    text = re.sub(r"[“”]", '"', text)
+    text = re.sub(r"[―—–]", " ", text)
+    text = re.sub(r"[‐−-]", "", text)
+    # 見出しの記号・強調・場面転換の飾り(* * * など)は比べない
+    text = re.sub(r"[#*_\\|>\[\]⁂※米]", " ", text)
+    return text.lower()
+
+
+def words(text: str) -> list[str]:
+    """英語の単語の並び(句読点を除く)。単語誤り率(WER)に使う。"""
+    tokens = (re.sub(r"[^\w']", "", t).strip("'") for t in normalize_en(text).split())
+    return [t for t in tokens if t]
+
+
+def levenshtein(a, b) -> int:
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         cur = [i] + [0] * len(b)
@@ -178,28 +206,44 @@ def score() -> None:
     rows = []
     for eng in engines:
         times = json.loads((WORK / "out" / eng / "_time.json").read_text(encoding="utf-8"))
-        errs = total = 0
+        errs = total = werrs = wtotal = 0
         per = []
         for p in pages:
             gold_file = WORK / "gold" / f"{p['id']}.txt"
             out_file = WORK / "out" / eng / f"{p['id']}.md"
             if not gold_file.exists() or not out_file.exists():
                 continue
-            g = normalize(gold_file.read_text(encoding="utf-8"))
-            o = normalize(out_file.read_text(encoding="utf-8"))
+            gold = gold_file.read_text(encoding="utf-8")
+            out = out_file.read_text(encoding="utf-8")
+            if p.get("lang") == "en":
+                g = re.sub(r"\s+", "", normalize_en(gold))
+                o = re.sub(r"\s+", "", normalize_en(out))
+            else:
+                g = normalize(gold)
+                o = normalize(out)
             e = levenshtein(o, g)
             errs += e
             total += len(g)
-            per.append(f"{p['id']}={e / len(g):.1%}")
+            item = f"{p['id']}={e / len(g):.1%}"
+            if p.get("lang") == "en":
+                gw = words(gold)
+                we = levenshtein(words(out), gw)
+                werrs += we
+                wtotal += len(gw)
+                item += f"/{we / len(gw):.1%}"
+            per.append(item)
         sec = sum(times.values()) / max(1, len(times))
-        rows.append((eng, errs / max(1, total), sec, " ".join(per)))
-    print(f"{'engine':40} {'CER':>7} {'sec/p':>6}  per-page")
-    for eng, cer, sec, per in sorted(rows, key=lambda r: r[1]):
-        print(f"{eng:40} {cer:7.2%} {sec:6.1f}  {per}")
+        wer = f"{werrs / wtotal:7.2%}" if wtotal else f"{'-':>7}"
+        rows.append((eng, errs / max(1, total), wer, sec, " ".join(per)))
+    print(f"{'engine':40} {'CER':>7} {'WER':>7} {'sec/p':>6}  per-page(CER/WER)")
+    for eng, cer, wer, sec, per in sorted(rows, key=lambda r: r[1]):
+        print(f"{eng:40} {cer:7.2%} {wer} {sec:6.1f}  {per}")
 
 
 def main() -> None:
+    global WORK
     ap = argparse.ArgumentParser()
+    ap.add_argument("--work", help="作業フォルダ(既定は data/ocr-compare)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--engines", nargs="+", choices=["vlm", "yomitoku", "ndlocr", "bookviewer"], required=True)
@@ -207,6 +251,8 @@ def main() -> None:
     r.add_argument("--vlm-mmproj")
     sub.add_parser("score")
     args = ap.parse_args()
+    if args.work:
+        WORK = Path(args.work).resolve()
 
     if args.cmd == "score":
         score()

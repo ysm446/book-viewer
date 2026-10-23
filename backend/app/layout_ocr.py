@@ -2,6 +2,7 @@
 
 1 枚の画像から、読み順に並んだ段落・見出し・図の領域を取り出し、Markdown に変換する。
 図は元画像から切り抜いて返し、Markdown では ![キャプション](../figures/…) で参照する。
+英語の本(lang="en")は、折り返しの行を空白でつなぎ、行末のハイフンで切れた語をつなぐ。
 
 VLM より字を書き換えにくく(誤字・欠落とも少ない)、1 ページ 1 秒未満で動く
 (比較は scripts/ocr-compare/)。モデルは初回使用時に Hugging Face から取得される。
@@ -31,6 +32,14 @@ _BANNER_RATIO = 4
 # 段落がここで終わっていれば、次の段落とはつながない。
 SENTENCE_END = ("。", "」", "』", ")", "）", "！", "？", "!", "?")
 _CAPTION_RE = re.compile(r"^\s*(図|表|写真|グラフ)\s*[0-9０-９]")
+# 英語の本の文の終わりとキャプション。
+SENTENCE_END_EN = (".", "!", "?", '"', "”", "’", ")")
+_CAPTION_RE_EN = re.compile(r"^\s*(Figure|Fig\.|Table|Plate|Photo|Chart|Map)\s*[0-9IVX]", re.IGNORECASE)
+# 英語の本の場面転換の飾り(* * * や ⁂。YomiToku は「米」と読むことがある)。
+_SCENE_BREAK_RE = re.compile(r"^[\s*＊⁂※米✳❋·•]+$")
+_BULLET_RE = re.compile(r"^(?:[·・•]\s*|-\s+)")
+# 英語の本の飾り頭文字(章の最初の 1 字を大きくしたもの)。本文の字のこの倍より高い 1 字の段落。
+_DROP_CAP_RATIO = 1.8
 # ルビの候補(かなだけ)と、ルビの親文字にする字(漢字)。
 _KANA_RE = re.compile(r"^[ぁ-ゖァ-ヺー]+$")
 _KANJI_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff々〆ヶ]")
@@ -69,9 +78,32 @@ def _overlaps(a: list[int], b: list[int], margin: int) -> bool:
     )
 
 
-def _text(p: dict) -> str:
-    # 紙面の折り返し改行は取り除く(日本語の本なので空白は足さない)。
-    return re.sub(r"\s*\n\s*", "", p["contents"]).strip()
+def _join(a: str, b: str, lang: str) -> str:
+    """折り返しで分かれた 2 つの並びをつなぐ。日本語はそのまま続ける。
+
+    英語は空白をはさむ。行末のハイフンで切れた語(some- / thing)はハイフンを外してつなぎ、
+    ダッシュの前後には空白を入れない。本来のハイフン(fat- / bellied)も外れてしまうが、
+    画像だけでは見分けられない。
+    """
+    if lang != "en" or not a or not b:
+        return a + b
+    if re.search(r"[a-z]-$", a) and b[:1].islower():
+        return a[:-1] + b
+    if a.endswith(("—", "-")) or b.startswith("—"):
+        # 大文字で続くハイフン(Pilot-in- / Training)は本来のハイフンなので残す
+        return a + b
+    return f"{a} {b}"
+
+
+def _text(p: dict, lang: str = "ja") -> str:
+    # 紙面の折り返し改行は取り除く(日本語の本なので空白は足さない。英語は _join でつなぐ)。
+    if lang != "en":
+        return re.sub(r"\s*\n\s*", "", p["contents"]).strip()
+    text = ""
+    for line in p["contents"].split("\n"):
+        # YomiToku はダッシュ(—)を水平線(―)で返す
+        text = _join(text, line.strip().replace("―", "—"), lang)
+    return text.strip()
 
 
 def _center(w: dict) -> tuple[float, float]:
@@ -105,6 +137,18 @@ def _is_ruby_only(p: dict, words: list[dict], page_char: float) -> bool:
         if x1 <= _center(w)[0] <= x2 and y1 <= _center(w)[1] <= y2
     ]
     return bool(sizes) and _median(sizes) < page_char * 0.7
+
+
+def _is_heading_en(p: dict, words: list[dict], page_char: float, text: str) -> bool:
+    """英語の本で、YomiToku が見出しと判定しなかった章題(One など)を見出しとみなすか。
+
+    1 行だけの短い段落で、文で終わらず、字が本文より明らかに大きいもの。
+    """
+    if page_char <= 0 or len(text) > 60 or "\n" in p["contents"].strip() or text.endswith(SENTENCE_END_EN):
+        return False
+    x1, y1, x2, y2 = p["box"]
+    sizes = [_word_size(w) for w in words if x1 <= _center(w)[0] <= x2 and y1 <= _center(w)[1] <= y2]
+    return bool(sizes) and _median(sizes) > page_char * 1.2
 
 
 def _ruby_marks(line: list[dict], rubies: list[dict], char: float) -> list[tuple[int, int, str]]:
@@ -156,14 +200,16 @@ def _ruby_marks(line: list[dict], rubies: list[dict], char: float) -> list[tuple
     return marks
 
 
-def _line_text(line: list[dict], marks: list[tuple[int, int, str]]) -> str:
+def _line_text(line: list[dict], marks: list[tuple[int, int, str]], lang: str = "ja") -> str:
+    if lang == "en":
+        return " ".join(pc["text"].strip().replace("―", "—") for pc in line)
     text = "".join(pc["text"].strip() for pc in line)
     for start, end, reading in reversed(marks):
         text = f"{text[:start]}<ruby>{text[start:end]}<rt>{reading}</rt></ruby>{text[end:]}"
     return text
 
 
-def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | None]:
+def _split_paragraphs(p: dict, words: list[dict], lang: str = "ja") -> tuple[list[str], bool | None]:
     """YomiToku の段落を、行頭の字下げで本来の段落に分け直す。
 
     YomiToku は隣り合う段落を 1 つにまとめることがある。行(word)ごとの座標から
@@ -172,7 +218,7 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
     戻り値は (段落のリスト, 先頭行が字下げされているか)。行が 1 本だけなど判断できない
     ときは None。行を取り出せないときは段落全体を 1 つとして返す。
     """
-    whole = _text(p)
+    whole = _text(p, lang)
     x1, y1, x2, y2 = p["box"]
     vertical = p.get("direction") == "vertical"
     pieces = []
@@ -225,16 +271,18 @@ def _split_paragraphs(p: dict, words: list[dict]) -> tuple[list[str], bool | Non
     for n, line in enumerate(lines):
         line.sort(key=lambda pc: pc["start"])
         marks = _ruby_marks(line, ruby_of.get(n, []), char)
-        rows.append((line[0]["start"], _line_text(line, marks)))
+        rows.append((line[0]["start"], _line_text(line, marks, lang)))
     base = min(start for start, _ in rows)
     paras: list[str] = []
     for i, (start, text) in enumerate(rows):
         if i == 0 or start - base > char * 0.5:
             paras.append(text)
         else:
-            paras[-1] += text
+            paras[-1] = _join(paras[-1], text, lang)
     # 行の取り出しが段落の中身と食い違う(字が欠ける)ときは分割をあきらめる。
-    if abs(len(_RUBY_TAG_RE.sub("", "".join(paras))) - len(whole)) > max(2, len(whole) // 20):
+    got = re.sub(r"\s", "", _RUBY_TAG_RE.sub("", "".join(paras)))
+    want = re.sub(r"\s", "", whole)
+    if abs(len(got) - len(want)) > max(2, len(want) // 20):
         return [whole], None
     first_indented = rows[0][0] - base > char * 0.5 if len(rows) >= 2 else None
     return [t for t in paras if t], first_indented
@@ -260,9 +308,11 @@ def _low_confidence(
     return out
 
 
-def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]:
+def transcribe(image_bytes: bytes, lang: str = "ja") -> tuple[str, list[Figure], list[dict], bool]:
     """画像を文字起こしし、(Markdown, 図のリスト, 確信度の低い行, 先頭が前ページの続きか) を返す。
 
+    lang は本の言語("ja" / "en")。英語では行を空白でつなぎ、文の終わり・キャプション・
+    場面転換・飾り頭文字を英語の本の決まりで扱う。
     Markdown 中の図は ![キャプション](FIGURE:k) の仮参照で、k は図のリストの添字。
     呼び出し側が保存先に合わせて置き換える。
     「先頭が前ページの続きか」は、最初の要素が字下げなしで始まる本文の段落のとき True
@@ -294,7 +344,7 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
     banners = []
     for f in data.get("figures", []):
         x1, y1, x2, y2 = f["box"]
-        inner = " ".join(_text(p) for p in f.get("paragraphs", []) if _text(p))
+        inner = " ".join(_text(p, lang) for p in f.get("paragraphs", []) if _text(p, lang))
         if inner and (x2 - x1) > (y2 - y1) * _BANNER_RATIO:
             # ページ上端の帯は欄外の章名(柱)なので本文に入れない。
             if y2 < img.shape[0] * 0.1:
@@ -311,8 +361,29 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
     paragraphs = [
         p
         for p in data.get("paragraphs", [])
-        if p.get("role") not in ("page_header", "page_footer") and not _is_ruby_only(p, words, page_char)
+        if p.get("role") not in ("page_header", "page_footer")
+        # 英語の本にルビは無い(小さい字の短い段落はスモールキャピタルなどの本文)
+        and not (lang != "en" and _is_ruby_only(p, words, page_char))
     ]
+    sentence_end = SENTENCE_END_EN if lang == "en" else SENTENCE_END
+    caption_re = _CAPTION_RE_EN if lang == "en" else _CAPTION_RE
+    # 英語の飾り頭文字(大きな 1 字の段落)は、右に接する段落の頭に付け直す(I + T WAS → IT WAS)。
+    drop_caps: dict[int, str] = {}  # 段落の id() → 頭に付ける字
+    if lang == "en" and page_char > 0:
+        caps = []
+        for p in paragraphs:
+            text = _text(p, lang)
+            x1, y1, x2, y2 = p["box"]
+            if not (len(text) == 1 and text.isupper() and y2 - y1 > page_char * _DROP_CAP_RATIO):
+                continue
+            for q in paragraphs:
+                # 頭文字の右へ続き、縦の範囲が重なる段落(頭文字の下の行の分、左端は頭文字と揃う)
+                qx1, qy1, qx2, qy2 = q["box"]
+                if q is not p and qx1 <= x2 + page_char * 2 and qx2 > x2 + page_char and qy1 <= y2 and qy2 >= y1:
+                    drop_caps[id(q)] = text
+                    caps.append(p)  # 頭文字の段落そのものは出さない
+                    break
+        paragraphs = [p for p in paragraphs if not any(p is c for c in caps)]
     # キャプションの判定: 図(またはキャプション)に接していて、図番号で始まるか、
     # 「。」で終わらない短い段落(見出しは除く)。キャプションに接した段落も同じ図のものとして連ねる。
     captions: dict[int, list[str]] = {}
@@ -323,11 +394,13 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
         for k, p in enumerate(paragraphs):
             if k in caption_of:
                 continue
-            text = _text(p)
+            text = _text(p, lang)
             if not text:
                 continue
-            likely = _CAPTION_RE.match(text) or (
-                len(text) < 120 and not text.endswith("。") and p.get("role") != "section_headings"
+            likely = caption_re.match(text) or (
+                len(text) < 120
+                and not text.endswith(sentence_end if lang == "en" else "。")
+                and p.get("role") != "section_headings"
             )
             if not likely:
                 continue
@@ -341,17 +414,34 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
                 caption_of[k] = near[0]
                 changed = True
     for k in sorted(caption_of, key=lambda j: paragraphs[j].get("order", 0)):
-        captions.setdefault(caption_of[k], []).append(_text(paragraphs[k]))
+        captions.setdefault(caption_of[k], []).append(_text(paragraphs[k], lang))
 
     body: list[dict] = list(banners)
     for k, p in enumerate(paragraphs):
-        if k in caption_of or not _text(p):
+        if k in caption_of or not _text(p, lang):
             continue
         role = p.get("role")
+        if lang == "en":
+            text = _text(p, lang)
+            if _SCENE_BREAK_RE.match(text):
+                # 場面転換の飾りは区切りの印にする(前後の段落はつながない)
+                body.append({"order": (p.get("order", 0), 0), "kind": "break", "text": "***"})
+                continue
+            if len(text) <= 2 and not re.search(r"[A-Za-z0-9]", text):
+                continue  # 記号の読み違い(箇条書きの点を「ド」と読むなど)
+            if role == "section_headings" and text.endswith(sentence_end):
+                role = None  # 文で終わる短い段落を見出しと取り違えたもの(And it would continue to.)
+            elif role is None and _is_heading_en(p, words, page_char, text):
+                role = "section_headings"
         if role == "section_headings":
-            texts, first_indented = [_text(p)], True
+            texts, first_indented = [_text(p, lang)], True
         else:
-            texts, first_indented = _split_paragraphs(p, words)
+            texts, first_indented = _split_paragraphs(p, words, lang)
+        if id(p) in drop_caps and texts:
+            texts[0] = drop_caps[id(p)] + texts[0]
+        if lang == "en":
+            # 箇条書きの記号(· ・ •)は Markdown のリストにする。記号の前に読み違いの字が付くことがある
+            texts = [_BULLET_RE.sub("- ", t) for t in texts]
         for n, text in enumerate(texts):
             body.append(
                 {
@@ -411,7 +501,10 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
         and ordered[0]["continues"]
     )
     for item in ordered:
-        if item["kind"] == "fig":
+        if item["kind"] == "break":
+            lines.append(item["text"])
+            last_text = None
+        elif item["kind"] == "fig":
             alt = item["text"].replace("[", "(").replace("]", ")")
             lines.append(f"![{alt}](FIGURE:{item['index']})")
         elif item["role"] == "section_headings":
@@ -420,10 +513,11 @@ def transcribe(image_bytes: bytes) -> tuple[str, list[Figure], list[dict], bool]
         elif (
             item["continues"]
             and last_text is not None
-            and not lines[last_text].endswith(SENTENCE_END)
+            and not lines[last_text].endswith(sentence_end)
+            and not (lang == "en" and item["text"].startswith("- "))
         ):
             # 文の途中で段落が切れている(見開きの境目・図をはさんだ続きなど)ので前の段落につなぐ。
-            lines[last_text] += item["text"]
+            lines[last_text] = _join(lines[last_text], item["text"], lang)
         else:
             lines.append(item["text"])
             last_text = len(lines) - 1

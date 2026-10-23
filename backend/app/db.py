@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS works (
     title           TEXT NOT NULL,
     author          TEXT NOT NULL DEFAULT '',
     writing_mode    TEXT NOT NULL DEFAULT 'horizontal',  -- 'horizontal' / 'vertical'(本文の書字方向)
+    language        TEXT NOT NULL DEFAULT 'ja',          -- 'ja' / 'en'(本の言語)
     page_count      INTEGER NOT NULL,
     page_direction  TEXT NOT NULL DEFAULT 'default',  -- 'default'(グローバル設定に従う) / 'rtl' / 'ltr'
     spread_offset   TEXT NOT NULL DEFAULT 'default',  -- 見開きのペア境界ずらし: 'default' / '0' / '1'
@@ -97,6 +98,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE works ADD COLUMN writing_mode TEXT NOT NULL DEFAULT 'horizontal'"
         )
+    if "language" not in cols:
+        conn.execute("ALTER TABLE works ADD COLUMN language TEXT NOT NULL DEFAULT 'ja'")
     chunk_cols = {row["name"] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
     if chunk_cols and "page_end" not in chunk_cols:
         conn.execute("ALTER TABLE chunks ADD COLUMN page_end INTEGER")

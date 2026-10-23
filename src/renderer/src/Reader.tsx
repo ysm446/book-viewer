@@ -8,8 +8,10 @@ import {
   removeWorkTag,
   saveReadingState,
   setWorkDirection,
+  setWorkLanguage,
   setWorkSpreadOffset,
   setWorkWritingMode,
+  type BookLanguage,
   type Bookmark,
   type Direction,
   type SpreadOffset,
@@ -111,6 +113,8 @@ interface ReaderProps {
   onProgress?: (workId: string, page: number, completed: boolean) => void
   /** 書字方向が変わったとき、一覧側へ反映する。 */
   onWritingModeChange?: (workId: string, writingMode: WritingMode) => void
+  /** 本の言語が変わったとき、一覧側へ反映する。 */
+  onLanguageChange?: (workId: string, language: BookLanguage) => void
   /** 見開きオフセットの上書きが変わったとき、一覧側へ反映する。 */
   onSpreadOffsetChange?: (workId: string, offset: SpreadOffset) => void
   /** タグ候補(既存タグ一覧)。 */
@@ -186,6 +190,7 @@ export function Reader({
   onProgress,
   onSpreadOffsetChange,
   onWritingModeChange,
+  onLanguageChange,
   allTags = [],
   onTagsChange,
   showInfo,
@@ -250,6 +255,7 @@ export function Reader({
     localStorage.setItem('readerViewMode', viewMode)
   }, [viewMode])
   const [writingMode, setWritingMode] = useState<WritingMode>(work.writing_mode ?? 'horizontal')
+  const [language, setLanguage] = useState<BookLanguage>(work.language ?? 'ja')
   // 本文の組み方・文字サイズ・書体・背景は本ごとに覚える(未設定の本は最後に使った設定で開く)。
   const [bookPrefs] = useState(() => loadBookTextPrefs(work.id))
   const [textLayout, setTextLayout] = useState<TextLayout>(() => {
@@ -550,6 +556,16 @@ export function Reader({
     onWritingModeChange?.(work.id, mode)
   }
 
+  function changeLanguage(lang: BookLanguage): void {
+    setLanguage(lang)
+    setWorkLanguage(root, work.id, lang).catch((e) =>
+      onNotify(`本の言語を保存できませんでした: ${(e as Error).message}`, null, true)
+    )
+    onLanguageChange?.(work.id, lang)
+    // 英語の本は横書き
+    if (lang === 'en' && writingMode === 'vertical') changeWritingMode('horizontal')
+  }
+
   function changeDirection(dir: Direction): void {
     setDirOverride(dir)
     setWorkDirection(root, work.id, dir).catch(() => {})
@@ -652,6 +668,21 @@ export function Reader({
               <option value="rtl">右 → 左</option>
               <option value="ltr">左 → 右</option>
             </select>
+          </div>
+          <div className="display-item">
+            <span className="display-label">本の言語</span>
+            <div className="seg" role="group" aria-label="本の言語">
+              {(['ja', 'en'] as const).map((l) => (
+                <button
+                  key={l}
+                  className={`seg-btn ${language === l ? 'seg-active' : ''}`}
+                  onClick={() => changeLanguage(l)}
+                  title="文字起こしの読み方（行のつなぎ方・文の終わりの判定など）を本の言語に合わせます。文字起こし済みのページは、やり直すと新しい言語で読み直します"
+                >
+                  {l === 'ja' ? '日本語' : '英語'}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="display-item">
             <span className="display-label">原本の書字方向</span>

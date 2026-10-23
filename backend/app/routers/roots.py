@@ -26,7 +26,7 @@ def list_works(root: str) -> dict:
     with connect(r) as conn:
         rows = conn.execute(
             """
-            SELECT w.id, w.rel_path, w.title, w.author, w.writing_mode, w.page_count, w.page_direction,
+            SELECT w.id, w.rel_path, w.title, w.author, w.writing_mode, w.language, w.page_count, w.page_direction,
                    w.spread_offset, w.sort_index, w.added_at, w.last_opened_at,
                    COALESCE(rs.last_page, 0) AS last_page,
                    COALESCE(rs.completed, 0) AS completed,

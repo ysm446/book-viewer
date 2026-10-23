@@ -63,6 +63,7 @@ class ImportItem(BaseModel):
     title: str | None = None
     author: str = ""
     writing_mode: str = "horizontal"
+    language: str = "ja"
 
 
 class ImportRequest(BaseModel):
@@ -88,6 +89,7 @@ def import_books(req: ImportRequest) -> dict:
                 title=item.title,
                 author=item.author,
                 writing_mode=item.writing_mode,
+                language=item.language,
                 known_ids=known,
             )
         except library.LibraryError as e:

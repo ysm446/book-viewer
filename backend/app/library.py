@@ -29,6 +29,13 @@ SOURCE_STEM = "original"
 SCHEMA_VERSION = 1
 
 WRITING_MODES = ("horizontal", "vertical")
+# 本の言語(文字起こしのエンジンの使い方・後処理を切り替える)。book.json に無ければ日本語。
+LANGUAGES = ("ja", "en")
+
+
+def book_language(book: dict | None) -> str:
+    lang = (book or {}).get("language")
+    return lang if lang in LANGUAGES else "ja"
 
 # Windows で使えない文字。フォルダ名では "_" に置き換える。
 _INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -159,6 +166,7 @@ def import_archive(
     title: str | None = None,
     author: str = "",
     writing_mode: str = "horizontal",
+    language: str = "ja",
     known_ids: set[str] | None = None,
 ) -> dict:
     """アーカイブを本フォルダとして取り込み、book.json の内容を返す。
@@ -170,6 +178,8 @@ def import_archive(
         raise LibraryError("mode は copy / move のいずれかです")
     if writing_mode not in WRITING_MODES:
         raise LibraryError("writing_mode は horizontal / vertical のいずれかです")
+    if language not in LANGUAGES:
+        raise LibraryError("language は ja / en のいずれかです")
     if not src.is_file():
         raise LibraryError("ファイルが見つかりません")
     if src.suffix.lower() not in ARCHIVE_EXTENSIONS:
@@ -201,6 +211,7 @@ def import_archive(
             "title": name,
             "author": author.strip(),
             "writing_mode": writing_mode,
+            "language": language,
             "source": source_rel,
             "original_filename": src.name,
             "page_count": pages,

@@ -95,7 +95,32 @@ def plain_for_llm(markdown: str) -> str:
     return text.strip()
 
 
-def prompt(writing_mode: str) -> str:
+_ENGLISH = """\
+Transcribe the body text on this screen into Markdown. The book is in English.
+- If the screen shows a two-page spread, read the left page to the end, then the right page.
+
+Rules:
+- Output only the Markdown text. No preamble, explanation, or code fences.
+- The image is a screenshot of an e-book reader. These are not body text, so do not output them:
+  the book title / window title at the top, "Page X/Y" or progress (%) at the bottom,
+  page numbers, running heads, and parts of other windows at the screen edges.
+- Copy the text exactly, word for word. Do not summarize, paraphrase, complete, or translate.
+  Keep the original spelling and punctuation (curly quotes, em dashes). Write unreadable characters as ?.
+- Join words hyphenated at the end of a line (some- / thing -> something). Keep real hyphens (fat-bellied).
+- Text set in small capitals is written in capitals. A large initial letter (drop cap) belongs to the first word.
+- Headings get #, ##, ### by size (chapter #, section ##, subheading ###).
+- Separate paragraphs with a blank line. Remove line breaks inside a paragraph (one paragraph per line).
+- Italic text is *italic*. Bulleted or numbered items become Markdown lists. Tables become Markdown tables.
+- Scene breaks (* * *, ornaments) are written as ***.
+- For figures, photos, and illustrations, do not transcribe text inside them; write one line
+  [図: caption] (if there is no caption, [図: short description]).
+- If the screen has no body text (blank page, cover image only, etc.), output nothing.
+"""
+
+
+def prompt(writing_mode: str, lang: str = "ja") -> str:
+    if lang == "en":
+        return _ENGLISH
     head = _VERTICAL if writing_mode == "vertical" else _HORIZONTAL
     return head + "\n守ること:\n" + _COMMON_RULES
 
@@ -128,7 +153,7 @@ def _book(root: Path, work_id: str) -> tuple[Path, Path, dict]:
     """(本フォルダ, 元アーカイブ, works 行) を返す。本フォルダ方式でなければエラー。"""
     with connect(root) as conn:
         row = conn.execute(
-            "SELECT rel_path, writing_mode, page_count FROM works WHERE id = ?", (work_id,)
+            "SELECT rel_path, writing_mode, language, page_count FROM works WHERE id = ?", (work_id,)
         ).fetchone()
     if row is None:
         raise TranscribeError("本が見つかりません")
@@ -237,22 +262,26 @@ _END_MARKUP_RE = re.compile(r"(</?ruby>|<rt>.*?</rt>|\*+)$")
 _SHORT_TAIL = 30
 
 
-def _ends_mid_sentence(block: str) -> bool:
+def _ends_mid_sentence(block: str, lang: str = "ja") -> bool:
     text = block.strip()
     while True:  # 末尾のルビや太字の記号は文の終わりの判定に使わない
         stripped = _END_MARKUP_RE.sub("", text).rstrip()
         if stripped == text:
             break
         text = stripped
-    return bool(text) and not text.endswith(layout_ocr.SENTENCE_END)
+    end = layout_ocr.SENTENCE_END_EN if lang == "en" else layout_ocr.SENTENCE_END
+    return bool(text) and not text.endswith(end)
 
 
-def joins_previous(prev_markdown: str, markdown: str, head_continues: bool | None = None) -> bool:
+def joins_previous(
+    prev_markdown: str, markdown: str, head_continues: bool | None = None, lang: str = "ja"
+) -> bool:
     """このページの最初の段落が、前のページの最後の段落の続きか。
 
     前のページが本文の段落で終わっていて文の途中(「。」などで終わらない)、このページが
     本文の段落で始まるときに続きとみなす。YomiToku で読んだページは、先頭が字下げされて
     いれば(head_continues=False)新しい段落なのでつながない。
+    英語の本(lang="en")は「.」などを文の終わりとし、句読点の無い並びはつながない。
     """
     if head_continues is False:
         return False
@@ -263,6 +292,10 @@ def joins_previous(prev_markdown: str, markdown: str, head_continues: bool | Non
     last, first = prev_blocks[-1].strip(), blocks[0].strip()
     if _NOT_PROSE_RE.match(last) or _NOT_PROSE_RE.match(first):
         return False
+    if lang == "en":
+        if not re.search(r"[.,;!?]", last + first):
+            return False
+        return _ends_mid_sentence(last, lang)
     # 句読点の無い並び(奥付・目次・参考文献・表の文字)は文章ではないのでつながない。
     # 前のページ側が短い(最後の行で始まった段落)ときは句読点が無くてもよい。
     if "。" not in last + first:
@@ -277,9 +310,9 @@ def _figure_name(index: int, k: int) -> str:
     return f"p{index + 1:04d}-{k + 1}.png"
 
 
-def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes) -> tuple[str, list[dict], bool]:
+def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes, lang: str) -> tuple[str, list[dict], bool]:
     """YomiToku で文字起こしし、図を figures/ に保存した (Markdown, 確信度の低い行, 先頭が続きか) を返す。"""
-    markdown, figures, low, head_continues = layout_ocr.transcribe(raw)
+    markdown, figures, low, head_continues = layout_ocr.transcribe(raw, lang)
     fig_dir = book_dir / FIGURES_DIRNAME
     # やり直しのときに前回の図が残らないよう、このページの図を消してから書く。
     for old in fig_dir.glob(f"p{index + 1:04d}-*.png"):
@@ -327,7 +360,8 @@ def transcribe_pages(
     elif pages is None:
         targets = [p for p in targets if not _read_meta(book_dir, p).get("edited")]
     total = len(targets)
-    text_prompt = prompt(row["writing_mode"])
+    lang = row["language"]
+    text_prompt = prompt(row["writing_mode"], lang)
     set_progress(work_id, 0, total, "transcribe")
     try:
         for n, idx in enumerate(targets):
@@ -337,7 +371,7 @@ def transcribe_pages(
             low: list[dict] = []
             head_continues: bool | None = None  # VLM では分からない(本文だけで判断する)
             if engine == "yomitoku":
-                text, low, head_continues = _transcribe_yomitoku(book_dir, idx, raw)
+                text, low, head_continues = _transcribe_yomitoku(book_dir, idx, raw, lang)
             else:
                 out = llm.chat(
                     base_url,

@@ -28,6 +28,7 @@ import {
   type LlmStatus,
   type ScanResult,
   type SpreadOffset,
+  type BookLanguage,
   type Work,
   type WritingMode
 } from './api'
@@ -514,6 +515,11 @@ export function App(): JSX.Element {
   function handleWritingModeChange(workId: string, writingMode: WritingMode): void {
     setWorks((ws) => ws.map((w) => (w.id === workId ? { ...w, writing_mode: writingMode } : w)))
     setCurrent((c) => (c && c.id === workId ? { ...c, writing_mode: writingMode } : c))
+  }
+
+  function handleLanguageChange(workId: string, language: BookLanguage): void {
+    setWorks((ws) => ws.map((w) => (w.id === workId ? { ...w, language } : w)))
+    setCurrent((c) => (c && c.id === workId ? { ...c, language } : c))
   }
 
   function handleSpreadOffsetChange(workId: string, offset: SpreadOffset): void {
@@ -1275,6 +1281,7 @@ export function App(): JSX.Element {
               onProgress={handleProgress}
               onSpreadOffsetChange={handleSpreadOffsetChange}
               onWritingModeChange={handleWritingModeChange}
+              onLanguageChange={handleLanguageChange}
               allTags={allTags}
               onTagsChange={handleTagsChange}
               showInfo={readerShowInfo}

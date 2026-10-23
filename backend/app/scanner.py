@@ -49,19 +49,20 @@ def scan(root: Path) -> dict:
             title = book.get("title") or book_dir.name
             author = book.get("author") or ""
             writing_mode = book.get("writing_mode") or "horizontal"
+            language = library.book_language(book)
             existing = conn.execute("SELECT id FROM works WHERE id = ?", (fid,)).fetchone()
             if existing is None:
                 conn.execute(
-                    "INSERT INTO works (id, rel_path, title, author, writing_mode, page_count, added_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (fid, rel, title, author, writing_mode, pages, book.get("imported_at") or _now()),
+                    "INSERT INTO works (id, rel_path, title, author, writing_mode, language, page_count, added_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (fid, rel, title, author, writing_mode, language, pages, book.get("imported_at") or _now()),
                 )
                 added += 1
             else:
                 conn.execute(
                     "UPDATE works SET rel_path = ?, title = ?, author = ?, writing_mode = ?, "
-                    "page_count = ? WHERE id = ?",
-                    (rel, title, author, writing_mode, pages, fid),
+                    "language = ?, page_count = ? WHERE id = ?",
+                    (rel, title, author, writing_mode, language, pages, fid),
                 )
                 updated += 1
             # 検索の索引(書名・著者・要約・本文)を更新。本文を読む側は別接続で works を

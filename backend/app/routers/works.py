@@ -213,6 +213,35 @@ def update_writing_mode(work_id: str, root: str, body: WritingModeUpdate) -> dic
     return {"ok": True}
 
 
+class LanguageUpdate(BaseModel):
+    language: str  # 'ja' / 'en'
+
+
+@router.put("/{work_id}/language")
+def update_language(work_id: str, root: str, body: LanguageUpdate) -> dict:
+    """本の言語(日本語 / 英語)を変更する。本フォルダなら book.json も更新する。
+
+    文字起こし済みのページはそのまま(やり直すと新しい言語で読み直す)。アプリ用の本文は
+    言語が指紋に入っているので、次に読むときに作り直される。
+    """
+    if body.language not in library.LANGUAGES:
+        raise HTTPException(status_code=400, detail="language は ja / en のいずれか")
+    r = get_root(root)
+    with connect(r) as conn:
+        row = conn.execute("SELECT rel_path FROM works WHERE id = ?", (work_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="本が見つかりません")
+        book_dir = library.book_dir_for(r, row["rel_path"])
+        if book_dir is not None:
+            book = library.read_book(book_dir)
+            if book is not None:
+                book["language"] = body.language
+                library.write_book(book_dir, book)
+        conn.execute("UPDATE works SET language = ? WHERE id = ?", (body.language, work_id))
+        conn.commit()
+    return {"ok": True}
+
+
 class SpreadOffsetUpdate(BaseModel):
     offset: str  # 'default' / '0' / '1'
 

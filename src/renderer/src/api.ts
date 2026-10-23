@@ -10,6 +10,8 @@ export interface Work {
   author: string
   /** 本文の書字方向(取り込み時に指定) */
   writing_mode: WritingMode
+  /** 本の言語(文字起こしの後処理を切り替える。取り込み時に指定) */
+  language: BookLanguage
   page_count: number
   page_direction: string
   spread_offset: string
@@ -22,6 +24,7 @@ export interface Work {
 }
 
 export type WritingMode = 'horizontal' | 'vertical'
+export type BookLanguage = 'ja' | 'en'
 
 export interface ScanResult {
   added: number
@@ -49,6 +52,7 @@ export interface ImportItem {
   title: string
   author: string
   writing_mode: WritingMode
+  language: BookLanguage
 }
 
 export interface ImportResult {
@@ -198,6 +202,18 @@ export async function setWorkWritingMode(
   await jsonFetch(`/works/${workId}/writing-mode?root=${encodeURIComponent(root)}`, {
     method: 'PUT',
     body: JSON.stringify({ writing_mode: writingMode })
+  })
+}
+
+/** 本の言語(日本語 / 英語)を変更する(book.json も更新される)。 */
+export async function setWorkLanguage(
+  root: string,
+  workId: string,
+  language: BookLanguage
+): Promise<void> {
+  await jsonFetch(`/works/${workId}/language?root=${encodeURIComponent(root)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ language })
   })
 }
 

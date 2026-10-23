@@ -22,7 +22,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import library, transcribe
+from . import layout_ocr, library, transcribe
 
 CONTENT_FILENAME = "content.json"
 SCHEMA = 1
@@ -76,10 +76,13 @@ def _last_page(block: dict) -> int:
     return cont[-1][0] if cont else block["page"]
 
 
-def build_blocks(pages: dict[int, str], heads: dict[int, bool | None], chapters: list[dict]) -> list[dict]:
+def build_blocks(
+    pages: dict[int, str], heads: dict[int, bool | None], chapters: list[dict], lang: str = "ja"
+) -> list[dict]:
     """ページごとの Markdown → ブロックの並び。
 
     heads はページ先頭の段落が字下げなしか(pages/0001.json の head_continues。分からなければ None)。
+    lang は本の言語。英語ではページ末のハイフンで切れた語(grand- / father)をつなぐ。
     """
     blocks: list[dict] = []
     for page in sorted(pages):
@@ -89,15 +92,20 @@ def build_blocks(pages: dict[int, str], heads: dict[int, bool | None], chapters:
                 k == 0
                 and prev is not None
                 and _last_page(prev) == page - 1
-                and transcribe.joins_previous(prev["md"], part, heads.get(page))
+                and transcribe.joins_previous(prev["md"], part, heads.get(page), lang)
             ):
                 tail = prev["md"].rstrip()
                 head = part.strip()
-                # 英単語どうしが切れていたら空白を入れる(日本語は詰める)。
-                ascii_word = lambda c: c.isascii() and c.isalnum()  # noqa: E731
-                sep = " " if ascii_word(tail[-1:]) and ascii_word(head[:1]) else ""
-                prev.setdefault("cont", []).append([page, len(tail) + len(sep)])
-                prev["md"] = tail + sep + head
+                if lang == "en":
+                    joined = layout_ocr._join(tail, head, lang)
+                else:
+                    # 英単語どうしが切れていたら空白を入れる(日本語は詰める)。
+                    ascii_word = lambda c: c.isascii() and c.isalnum()  # noqa: E731
+                    sep = " " if ascii_word(tail[-1:]) and ascii_word(head[:1]) else ""
+                    joined = tail + sep + head
+                # 続きの開始位置(ハイフンを外したぶん前の側が縮むことがある)
+                prev.setdefault("cont", []).append([page, len(joined) - len(head)])
+                prev["md"] = joined
                 continue
             blocks.append({"page": page, "kind": _kind(part), "md": part})
     # 章の始まり: その章の開始ページ以降で最初に始まるブロック。
@@ -111,9 +119,9 @@ def build_blocks(pages: dict[int, str], heads: dict[int, bool | None], chapters:
     return blocks
 
 
-def _signature(book_dir: Path, done: list[int], chapters: list[dict]) -> str:
-    """材料(ページの本文・補助情報・章立て)の指紋。変わっていたら作り直す。"""
-    h = hashlib.sha1(f"schema {SCHEMA}\n".encode())
+def _signature(book_dir: Path, done: list[int], chapters: list[dict], lang: str) -> str:
+    """材料(ページの本文・補助情報・章立て・本の言語)の指紋。変わっていたら作り直す。"""
+    h = hashlib.sha1(f"schema {SCHEMA}\nlang {lang}\n".encode())
     for p in done:
         for path in (transcribe.page_path(book_dir, p), transcribe.meta_path(book_dir, p)):
             try:
@@ -134,8 +142,9 @@ def load(root: Path, work_id: str) -> dict:
     book_dir, _, _ = transcribe._book(root, work_id)
     book = library.read_book(book_dir) or {}
     chapters = [c for c in book.get("chapters") or [] if isinstance(c, dict) and "page" in c]
+    lang = library.book_language(book)
     done = transcribe.done_pages(root, work_id)
-    signature = _signature(book_dir, done, chapters)
+    signature = _signature(book_dir, done, chapters, lang)
     path = book_dir / CONTENT_FILENAME
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -150,7 +159,7 @@ def load(root: Path, work_id: str) -> dict:
         "signature": signature,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "pages_done": len(done),
-        "blocks": build_blocks(pages, heads, chapters),
+        "blocks": build_blocks(pages, heads, chapters, lang),
     }
     try:
         tmp = path.with_suffix(".json.tmp")
