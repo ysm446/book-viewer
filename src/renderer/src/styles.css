@@ -1752,6 +1752,15 @@ input[type='checkbox']:focus-visible {
 .font-picker {
   position: relative;
 }
+/* テキスト表示のツールバーの「訳し直す」のメニュー(ボタンの下に左寄せで開く) */
+.text-redo {
+  position: relative;
+}
+.text-redo-menu {
+  top: calc(100% + 4px);
+  right: auto;
+  left: 0;
+}
 .font-picker-btn {
   display: inline-flex;
   align-items: center;

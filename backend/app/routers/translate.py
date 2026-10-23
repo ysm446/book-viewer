@@ -20,6 +20,7 @@ def get_translation(work_id: str, root: str) -> dict:
 class TranslateRequest(BaseModel):
     root: str
     redo: bool = False  # 訳したブロックも訳し直す(訳語表は残す)
+    blocks: list[int] | None = None  # このブロック(content.json の添字)だけ訳し直す
 
 
 @router.post("/{work_id}/translate")
@@ -27,6 +28,7 @@ def enqueue_translate(work_id: str, body: TranslateRequest) -> dict:
     """日本語訳をジョブキューに積む(LLM の読み込みが必要)。"""
     get_root(body.root)
     try:
-        return jobs.enqueue(body.root, work_id, "translate", force=body.redo)
+        extra = {"blocks": body.blocks} if body.blocks is not None else None
+        return jobs.enqueue(body.root, work_id, "translate", force=body.redo, extra=extra)
     except jobs.NotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

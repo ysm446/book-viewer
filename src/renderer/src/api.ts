@@ -354,6 +354,8 @@ export interface TranslationPair {
 /** 訳したブロック。head は見出し・箇条の記号など、訳さない頭の部分(`## ` など)。 */
 export interface TranslatedBlock {
   head: string
+  /** 訳したモデルの名前(記録の無い古い訳は空) */
+  model: string
   pairs: TranslationPair[]
 }
 
@@ -364,6 +366,8 @@ export interface BookTranslation {
   /** 訳す対象のブロック数と、訳したブロック数 */
   total: number
   done: number
+  /** 訳したモデルごとのブロック数(多い順。model が空は記録の無い古い訳) */
+  models: { model: string; blocks: number }[]
   blocks: (TranslatedBlock | null)[]
 }
 
@@ -371,11 +375,18 @@ export async function getTranslation(root: string, workId: string): Promise<Book
   return jsonFetch(`/works/${workId}/translation?root=${encodeURIComponent(root)}`)
 }
 
-/** 日本語訳をジョブキューに積む(LLM の読み込みが必要)。redo で訳したブロックも訳し直す。 */
-export async function enqueueTranslate(root: string, workId: string, redo = false): Promise<JobQueue> {
+/**
+ * 日本語訳をジョブキューに積む(LLM の読み込みが必要)。
+ * redo で訳したブロックも全部訳し直し、blocks を渡すとそのブロック(BookContent.blocks の添字)だけ訳し直す。
+ */
+export async function enqueueTranslate(
+  root: string,
+  workId: string,
+  opts: { redo?: boolean; blocks?: number[] } = {}
+): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/translate`, {
     method: 'POST',
-    body: JSON.stringify({ root, redo })
+    body: JSON.stringify({ root, redo: opts.redo ?? false, blocks: opts.blocks ?? null })
   })
 }
 

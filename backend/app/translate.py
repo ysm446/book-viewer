@@ -216,20 +216,31 @@ def run(
     base_url: str,
     *,
     redo: bool = False,
+    indices: list[int] | None = None,
+    model: str | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
-    """まだ訳していないブロックを先頭から訳し、訳したブロック数を返す。redo なら全部訳し直す(訳語表は残す)。"""
+    """まだ訳していないブロックを先頭から訳し、訳したブロック数を返す。
+
+    redo なら訳したブロックも全部訳し直す。indices を渡すと、そのブロック(content.json の添字)だけを
+    訳し直す(今の画面の段落など)。どちらも訳語表は残し、新しい訳が取れなかったブロックは前の訳のままにする。
+    model は訳したモデルの名前(ブロックごとに残し、モデルを変えて訳し直したときに見分ける)。
+    """
     book_dir, book = _book_dir(root, work_id)
     if library.book_language(book) != "en":
         raise TranslateError("日本語訳を作れるのは英語の本だけです")
     title = book.get("title") or ""
     blocks = content.load(root, work_id)["blocks"]
     data = _load(book_dir)
-    if redo:
-        data["blocks"] = {}
-    todo = [
-        i for i, b in enumerate(blocks) if _translatable(b) and block_key(b["md"]) not in data["blocks"]
-    ]
+    if indices is not None:
+        wanted = set(indices)
+        todo = [i for i, b in enumerate(blocks) if i in wanted and _translatable(b)]
+    elif redo:
+        todo = [i for i, b in enumerate(blocks) if _translatable(b)]
+    else:
+        todo = [
+            i for i, b in enumerate(blocks) if _translatable(b) and block_key(b["md"]) not in data["blocks"]
+        ]
     total = len(todo)
     done = 0
     set_progress(work_id, 0, total, "translate")
@@ -276,6 +287,7 @@ def run(
                     "head": b["head"],
                     "src": b["sents"],
                     "pairs": pairs,
+                    "model": model,
                     "at": now,
                 }
                 done += 1
@@ -292,14 +304,16 @@ def run(
 def get_translation(root: Path, work_id: str) -> dict:
     """content.json のブロックの並びに合わせた訳。
 
-    {signature, total, done, blocks}。blocks[i] は訳さないブロックと未訳のブロックでは None、
-    訳したブロックでは {head, pairs: [{en, ja}]}(en は組が覆う原文の文をつないだもの)。
+    {signature, total, done, models, blocks}。blocks[i] は訳さないブロックと未訳のブロックでは None、
+    訳したブロックでは {head, model, pairs: [{en, ja}]}(en は組が覆う原文の文をつないだもの)。
+    models は訳したモデルごとのブロック数(多い順)。
     """
     book_dir, _ = _book_dir(root, work_id)
     data = content.load(root, work_id)
     saved = _load(book_dir)["blocks"]
     out: list[dict | None] = []
     total = done = 0
+    models: dict[str, int] = {}
     for b in data["blocks"]:
         if not _translatable(b):
             out.append(None)
@@ -310,14 +324,24 @@ def get_translation(root: Path, work_id: str) -> dict:
             out.append(None)
             continue
         done += 1
+        model = entry.get("model") or ""
+        models[model] = models.get(model, 0) + 1
         src = entry.get("src") or []
         out.append(
             {
                 "head": entry.get("head", ""),
+                "model": model,
                 "pairs": [
                     {"en": " ".join(src[p["s"][0] : p["s"][1] + 1]), "ja": p["ja"]}
                     for p in entry.get("pairs", [])
                 ],
             }
         )
-    return {"signature": data["signature"], "total": total, "done": done, "blocks": out}
+    ranked = sorted(models.items(), key=lambda kv: -kv[1])
+    return {
+        "signature": data["signature"],
+        "total": total,
+        "done": done,
+        "models": [{"model": m, "blocks": n} for m, n in ranked],
+        "blocks": out,
+    }

@@ -496,10 +496,10 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       .catch(() => {})
   }, [isEnglish, work.id, watchTranslate])
 
-  async function translate(redo = false): Promise<void> {
+  async function translate(opts: { redo?: boolean; blocks?: number[] } = {}): Promise<void> {
     setError(null)
     try {
-      await enqueueTranslate(root, work.id, redo)
+      await enqueueTranslate(root, work.id, opts)
       setTrJob({ state: 'queued', current: 0, total: 0 })
       watchTranslate()
     } catch (e) {
@@ -869,14 +869,35 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useEffect(() => {
     closeDict()
   }, [screen, sec, dictEnabled, closeDict])
+  // 訳し直すのメニュー(この画面 / 全部)
+  const [redoMenu, setRedoMenu] = useState(false)
+
+  // 辞書やメニューが開いている間の Escape は、それを閉じるだけにする。リーダーは Escape で一覧へ戻るので、
+  // 先に(capture で)受けて止める。
+  const popupOpen = !!dict || redoMenu
   useEffect(() => {
-    if (!dict) return
+    if (!popupOpen) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') closeDict()
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      closeDict()
+      setRedoMenu(false)
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [dict, closeDict])
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [popupOpen, closeDict])
+
+  /** 今の画面に出ているブロック(blocks の添字)。 */
+  function blocksOnScreen(): number[] {
+    const l = layout.current
+    const s = l ? sections[l.sec] : undefined
+    if (!l || !s) return []
+    const out: number[] = []
+    l.starts.forEach((st, i) => {
+      if (st <= screenRef.current && l.ends[i] >= screenRef.current) out.push(s.start + i)
+    })
+    return out
+  }
   useEffect(() => () => window.clearTimeout(dictTimer.current), [])
 
   const turn = useCallback(
@@ -964,7 +985,14 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         )}
         {isEnglish && (translation !== 'off' || trJob) && (
           <>
-            <span className="text-toolbar-note">
+            <span
+              className="text-toolbar-note"
+              title={
+                tr && tr.models.length > 0
+                  ? `訳したモデル: ${tr.models.map((m) => `${m.model || '記録なし'}（${m.blocks} 段落）`).join('、')}`
+                  : undefined
+              }
+            >
               訳 {tr?.done ?? 0} / {tr?.total ?? 0}
             </span>
             {trJob ? (
@@ -987,20 +1015,75 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                 </button>
               </>
             ) : (
-              tr &&
-              tr.total > tr.done && (
-                <button
-                  className="btn"
-                  onClick={() => void translate()}
-                  disabled={!llmReady}
-                  title={
-                    llmReady
-                      ? 'まだ訳していない段落を先頭から順に日本語に訳します（時間がかかります。読みながら待てます）'
-                      : 'モデルを読み込むと翻訳できます'
-                  }
-                >
-                  残り {tr.total - tr.done} 段落を翻訳
-                </button>
+              tr && (
+                <>
+                  {tr.total > tr.done && (
+                    <button
+                      className="btn"
+                      onClick={() => void translate()}
+                      disabled={!llmReady}
+                      title={
+                        llmReady
+                          ? 'まだ訳していない段落を先頭から順に日本語に訳します（時間がかかります。読みながら待てます）'
+                          : 'モデルを読み込むと翻訳できます'
+                      }
+                    >
+                      残り {tr.total - tr.done} 段落を翻訳
+                    </button>
+                  )}
+                  {tr.done > 0 && (
+                    <div className="text-redo">
+                      <button
+                        className="btn"
+                        onClick={() => setRedoMenu((v) => !v)}
+                        disabled={!llmReady}
+                        aria-haspopup="menu"
+                        aria-expanded={redoMenu}
+                        title={
+                          llmReady
+                            ? '今読み込んでいるモデルで訳し直します（モデルを変えて訳を比べるときなど）'
+                            : 'モデルを読み込むと訳し直せます'
+                        }
+                      >
+                        訳し直す
+                      </button>
+                      {redoMenu && (
+                        <>
+                          <div className="popup-backdrop" onClick={() => setRedoMenu(false)} />
+                          <div className="ex-popup text-redo-menu" role="menu" aria-label="訳し直す">
+                            <button
+                              className="ex-popup-item"
+                              role="menuitem"
+                              onClick={() => {
+                                setRedoMenu(false)
+                                const blocks = blocksOnScreen()
+                                if (blocks.length > 0) void translate({ blocks })
+                              }}
+                            >
+                              この画面の段落を訳し直す
+                            </button>
+                            <button
+                              className="ex-popup-item"
+                              role="menuitem"
+                              onClick={() => {
+                                setRedoMenu(false)
+                                if (
+                                  window.confirm(
+                                    `訳した ${tr.done} 段落をすべて、今のモデルで訳し直します（時間がかかります。人名などの訳語はそのまま使います）。よろしいですか？`
+                                  )
+                                ) {
+                                  void translate({ redo: true })
+                                }
+                              }}
+                            >
+                              全部を訳し直す…
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </>
               )
             )}
           </>
