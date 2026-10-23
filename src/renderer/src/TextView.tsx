@@ -75,7 +75,21 @@ export interface TextViewHandle {
 /** 本文中の図の参照(../figures/p0001-1.png)だけを表示する。それ以外は読み込まない。 */
 const FIGURE_SRC_RE = /^\.\.\/figures\/(p\d{4}-\d+\.png)$/
 
-type Job = { state: 'queued' | 'running'; current: number; total: number } | null
+type Job = {
+  state: 'queued' | 'running'
+  current: number
+  total: number
+  /** 実行中のジョブの経過秒(キューから受け取った時点の値) */
+  elapsed?: number
+} | null
+
+/** 経過時間の表示(1 時間を超えたら h:mm:ss)。 */
+function fmtElapsed(sec: number): string {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = String(sec % 60).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
+}
 
 /** 編集中のページ(原本と見比べて本文を直す)。 */
 interface Editing {
@@ -369,7 +383,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         const q = await getQueue()
         const cur = q.current?.work_id === work.id && q.current.kind === 'translate' ? q.current : null
         const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'translate')
-        if (cur) setTrJob({ state: 'running', current: cur.current, total: cur.total })
+        if (cur) setTrJob({ state: 'running', current: cur.current, total: cur.total, elapsed: cur.elapsed })
         else if (pending) setTrJob({ state: 'queued', current: 0, total: 0 })
         const progressed = cur !== null && cur.current !== lastCurrent
         lastCurrent = cur ? cur.current : -1
@@ -393,6 +407,17 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     }
     void tick()
   }, [work.id, reloadTranslation])
+
+  // 翻訳の経過時間。キューの値(2 秒ごと)の間も 1 秒ごとに進めて見せる。
+  const [trElapsed, setTrElapsed] = useState(0)
+  const trBase = trJob?.elapsed
+  useEffect(() => {
+    if (trBase === undefined) return
+    const at = Date.now()
+    setTrElapsed(trBase)
+    const id = setInterval(() => setTrElapsed(trBase + Math.floor((Date.now() - at) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [trBase])
 
   // 開いた時点で既に翻訳中なら進み具合を追う。
   useEffect(() => {
@@ -800,7 +825,9 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   />
                 </span>
                 <span className="text-toolbar-note">
-                  {trJob.state === 'queued' ? '順番待ち…' : `翻訳中 ${trJob.current}/${trJob.total}`}
+                  {trJob.state === 'queued'
+                    ? '順番待ち…'
+                    : `翻訳中 ${trJob.current}/${trJob.total} ・ ${fmtElapsed(trElapsed)}`}
                 </span>
                 <button className="btn" onClick={() => void cancelJob(work.id)}>
                   中止
