@@ -17,6 +17,12 @@ def get_translation(work_id: str, root: str) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{work_id}/translation/live")
+def get_translation_live(work_id: str) -> dict:
+    """翻訳中のまとまりの、保存前の訳(LLM が書いている途中の訳文を含む)。翻訳していなければ blocks は空。"""
+    return translate.get_live(work_id)
+
+
 class TranslateRequest(BaseModel):
     root: str
     redo: bool = False  # 訳したブロックも訳し直す(訳語表は残す)

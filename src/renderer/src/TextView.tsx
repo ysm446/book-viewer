@@ -18,6 +18,7 @@ import {
   getQueue,
   getPageText,
   getTranslation,
+  getTranslationLive,
   lookupWord,
   pageUrl,
   savePageText,
@@ -29,6 +30,7 @@ import {
   type PageText,
   type TranscribeEngine,
   type TranslatedBlock,
+  type TranslationLive,
   type Work
 } from './api'
 import { Markdown } from './Markdown'
@@ -431,12 +433,17 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     reloadTranslation().catch((e) => setError((e as Error).message))
   }, [isEnglish, signature, reloadTranslation])
 
-  // 翻訳の進み具合を追う。訳しながら読めるよう、進んでいる間もときどき訳を読み込み直す。
+  // 翻訳中の途中経過(LLM が書いている途中の訳文)。訳文を出しているときだけ取りに行く。
+  const [live, setLive] = useState<TranslationLive | null>(null)
+  const translationRef = useRef(translation)
+  translationRef.current = translation
+
+  // 翻訳の進み具合を追う。1 秒ごとに途中経過を取り、まとまりが保存されたら(進み具合が変わったら)
+  // 訳を読み込み直す。訳しながら読める。
   const trPolling = useRef(false)
   const watchTranslate = useCallback((): void => {
     if (trPolling.current) return
     trPolling.current = true
-    let loadedTr = Date.now()
     let lastCurrent = -1
     const tick = async (): Promise<void> => {
       if (!alive.current) {
@@ -451,11 +458,10 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         else if (pending) setTrJob({ state: 'queued', current: 0, total: 0 })
         const progressed = cur !== null && cur.current !== lastCurrent
         lastCurrent = cur ? cur.current : -1
-        if (progressed && Date.now() - loadedTr > 10000) {
-          loadedTr = Date.now()
-          await reloadTranslation()
-        }
+        if (progressed) await reloadTranslation()
+        if (cur && translationRef.current !== 'off') setLive(await getTranslationLive(work.id))
         if (!cur && !pending) {
+          setLive(null)
           const recent = q.recent.filter((r) => r.work_id === work.id && r.kind === 'translate')
           const last = recent[recent.length - 1]
           if (last?.status === 'error') setError(last.error ?? '翻訳に失敗しました')
@@ -467,12 +473,12 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       } catch {
         // 一時的な取得失敗は次の周期で取り直す
       }
-      setTimeout(() => void tick(), 2000)
+      setTimeout(() => void tick(), 1000)
     }
     void tick()
   }, [work.id, reloadTranslation])
 
-  // 翻訳の経過時間。キューの値(2 秒ごと)の間も 1 秒ごとに進めて見せる。
+  // 翻訳の経過時間。キューの値の間も 1 秒ごとに進めて見せる。
   const [trElapsed, setTrElapsed] = useState(0)
   const trBase = trJob?.elapsed
   useEffect(() => {
@@ -689,8 +695,15 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   // 区画の本文。ページ送りのたびに作り直さないよう、区画が変わったときだけ作る。
   // 英語の本で訳文を出すときは、ブロック(data-b。位置の基準)はそのままに、中身を訳文・対訳にする。
   const current = sections[sec]
-  const trBlocks =
-    translation !== 'off' && tr && content && tr.signature === content.signature ? tr.blocks : null
+  // 保存済みの訳に、翻訳中のまとまりの途中経過を重ねる。
+  const trBlocks = useMemo(() => {
+    if (translation === 'off' || !tr || !content || tr.signature !== content.signature) return null
+    const liveBlocks = live && live.signature === content.signature ? Object.entries(live.blocks) : []
+    if (liveBlocks.length === 0) return tr.blocks
+    const merged = tr.blocks.slice()
+    for (const [k, b] of liveBlocks) merged[Number(k)] = b
+    return merged
+  }, [translation, tr, content, live])
   const body = useMemo(() => {
     if (!blocks || !current) return null
     const md = (text: string, className = 'rf-md'): JSX.Element => (

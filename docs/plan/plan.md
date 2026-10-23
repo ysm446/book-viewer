@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-10-23 09:59
+更新日時: 2026-10-23 10:07
 
 目的と完成形は [goals.md](goals.md)、現在の進捗は [progress.md](progress.md)。
 
@@ -161,6 +161,11 @@ API は `GET /api/dictionary?word=`(書かれた形と、語尾を外した元�
 - 保存は本フォルダの `translation/ja.json`(`{schema, blocks: {本文の指紋: {head, src, pairs, at}}, glossary}`)。
   ブロックは md の SHA-1 で引くので、`content.json` を作り直しても本文が同じブロックの訳は残る(文字起こしの
   やり直し・手直しで本文が変わったブロックだけ未訳に戻る)。まとまりごとに保存するので、止めても続きから訳せる。
+- ストリーミング: まとまりの訳は `llm.chat_stream`(json_schema 付き)で受け取り、0.4 秒ごとに書きかけの JSON から
+  組(from / to / ja。ja は書きかけでもよい)を正規表現で取り出して、メモリの途中経過に置く(`get_live`、
+  `GET /api/works/{id}/translation/live`)。まとまりを保存したら消す。json_schema のストリーミングを受け付けない
+  サーバ(400)は、まとめて受け取る(途中経過は出ない)。画面は翻訳中に 1 秒ごとに途中経過を取り、保存済みの訳に
+  重ねて表示する。進み具合(保存したまとまり)が変わったら訳全体を読み込み直す。
 - `get_translation` はブロックの並びに合わせて `{head, model, pairs: [{en, ja}]}`(未訳・訳さないブロックは null)と、
   訳したモデルごとのブロック数 `models` を返す。
 - 訳し直し: `redo`(全部)と `blocks`(content.json の添字。画面の「この画面の段落を訳し直す」)。どちらも訳語表は残し、

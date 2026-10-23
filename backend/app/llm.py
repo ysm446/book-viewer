@@ -140,19 +140,26 @@ def chat_stream(
     timeout: float = 600.0,
     temperature: float = 0.2,
     think: bool | None = None,
+    json_schema: dict | None = None,
 ):
     """chat completions を stream=True で呼び、差分(delta)を順に yield する。
 
     yield する dict は {"type": "reasoning"|"content", "text": str}。
     reasoning は思考過程(対応モデルが reasoning_content を返す場合)。
+    json_schema を渡すと、出力をスキーマ準拠に強制する(途中の JSON を読みながら表示する用途)。
+    サーバがエラーを返したら LlmHttpError(json_schema 非対応の 400 なら呼び出し側で chat に切り替える)。
     """
     url = base_url.rstrip("/") + "/chat/completions"
-    data = json.dumps(_payload(model, messages, temperature, True, think)).encode("utf-8")
+    payload = _payload(model, messages, temperature, True, think, json_schema=json_schema)
+    data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}, method="POST"
     )
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:500]
+        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}") from e
     except _NETWORK_ERRORS as e:
         raise LlmError(f"LLM サーバへ接続できません: {e}") from e
     with resp:

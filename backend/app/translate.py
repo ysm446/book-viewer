@@ -14,6 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -85,6 +87,105 @@ _BATCH_SCHEMA = {
 
 class TranslateError(RuntimeError):
     pass
+
+
+# ---- 翻訳中の途中経過(ストリーミング) ----
+# LLM の出力を受け取りながら、書きかけの JSON から訳文の組を取り出してここに置く。画面は翻訳中に
+# get_live() をこまめに読み、保存前の訳を少しずつ表示する。まとまりを保存したら消す。
+_live_lock = threading.Lock()
+_live: dict[str, dict] = {}  # work_id -> {"signature": str, "blocks": {ブロックの添字: 訳したブロック}}
+# 途中経過を取り出す間隔(秒)
+_LIVE_INTERVAL = 0.4
+
+_LIVE_ID_RE = re.compile(r'"id"\s*:\s*(\d+)')
+# スキーマのプロパティ順(from, to, ja)で出力される。ja は書きかけ(閉じ引用符が無い)でもよい
+_LIVE_PAIR_RE = re.compile(r'"from"\s*:\s*(\d+)\s*,\s*"to"\s*:\s*(\d+)\s*,\s*"ja"\s*:\s*"((?:[^"\\]|\\.)*)')
+
+
+def _decode_partial(raw: str) -> str:
+    """JSON 文字列の中身(書きかけ)を戻す。末尾の書きかけのエスケープ(バックスラッシュだけ、桁の足りない u)は落とす。"""
+    raw = re.sub(r"\\(u[0-9a-fA-F]{0,3})?$", "", raw)
+    try:
+        return json.loads(f'"{raw}"')
+    except ValueError:
+        return raw
+
+
+def _partial_pairs(text: str) -> dict[int, list[dict]]:
+    """書きかけの出力から、ブロックの id ごとの組 [{from, to, ja}] を取り出す。"""
+    out: dict[int, list[dict]] = {}
+    ids = list(_LIVE_ID_RE.finditer(text))
+    for n, m in enumerate(ids):
+        end = ids[n + 1].start() if n + 1 < len(ids) else len(text)
+        out[int(m.group(1))] = [
+            {"from": int(p.group(1)), "to": int(p.group(2)), "ja": _decode_partial(p.group(3))}
+            for p in _LIVE_PAIR_RE.finditer(text, m.end(), end)
+        ]
+    return out
+
+
+def _set_live(work_id: str, signature: str, batch: list[dict], text: str, model: str | None) -> None:
+    blocks: dict[int, dict] = {}
+    for bid, pairs in _partial_pairs(text).items():
+        if not (0 <= bid < len(batch)) or not pairs:
+            continue
+        b = batch[bid]
+        n = len(b["sents"])
+        shown = []
+        for pr in pairs:
+            a, z = min(pr["from"], n - 1), min(max(pr["to"], pr["from"]), n - 1)
+            if a < 0:
+                continue
+            shown.append({"en": " ".join(b["sents"][a : z + 1]), "ja": pr["ja"]})
+        if shown:
+            blocks[b["index"]] = {"head": b["head"], "model": model or "", "pairs": shown, "live": True}
+    with _live_lock:
+        _live[work_id] = {"signature": signature, "blocks": blocks}
+
+
+def _clear_live(work_id: str) -> None:
+    with _live_lock:
+        _live.pop(work_id, None)
+
+
+def get_live(work_id: str) -> dict:
+    """翻訳中のまとまりの、保存前の訳(画面の途中表示用)。翻訳していなければ blocks は空。"""
+    with _live_lock:
+        cur = _live.get(work_id)
+        if not cur:
+            return {"signature": None, "blocks": {}}
+        return {"signature": cur["signature"], "blocks": {str(k): v for k, v in cur["blocks"].items()}}
+
+
+def _translate_batch(
+    base_url: str,
+    prompt: str,
+    work_id: str,
+    signature: str,
+    batch: list[dict],
+    model: str | None,
+    cancel_check: Callable[[], bool] | None,
+) -> str:
+    """まとまりを訳し、LLM の出力(JSON の文字列)を返す。受け取りながら途中経過を _live に置く。"""
+    messages = [{"role": "user", "content": prompt}]
+    text = ""
+    last = 0.0
+    try:
+        for delta in llm.chat_stream(base_url, messages, temperature=0.2, think=False, json_schema=_BATCH_SCHEMA):
+            if cancel_check and cancel_check():
+                raise Cancelled()
+            if delta["type"] != "content":
+                continue
+            text += delta["text"]
+            if time.monotonic() - last >= _LIVE_INTERVAL:
+                last = time.monotonic()
+                _set_live(work_id, signature, batch, text, model)
+    except llm.LlmHttpError as e:
+        # json_schema のストリーミングを受け付けないサーバは、まとめて受け取る(途中経過は出ない)
+        if e.status != 400:
+            raise
+        return llm.chat(base_url, messages, temperature=0.2, think=False, json_schema=_BATCH_SCHEMA)
+    return llm.strip_think(text)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -230,7 +331,8 @@ def run(
     if library.book_language(book) != "en":
         raise TranslateError("日本語訳を作れるのは英語の本だけです")
     title = book.get("title") or ""
-    blocks = content.load(root, work_id)["blocks"]
+    loaded = content.load(root, work_id)
+    blocks = loaded["blocks"]
     data = _load(book_dir)
     if indices is not None:
         wanted = set(indices)
@@ -269,12 +371,8 @@ def run(
                     context.insert(0, (_source(blocks[j])[1], _pairs_text(entry)))
             src_text = " ".join(" ".join(b["sents"]) for b in batch)
             prompt = _prompt(title, batch, context, _relevant_glossary(data["glossary"], src_text))
-            out = llm.chat(
-                base_url,
-                [{"role": "user", "content": prompt}],
-                temperature=0.2,
-                think=False,
-                json_schema=_BATCH_SCHEMA,
+            out = _translate_batch(
+                base_url, prompt, work_id, loaded["signature"], batch, model, cancel_check
             )
             result = llm.parse_json(out)
             by_id = {r.get("id"): r for r in result.get("blocks") or [] if isinstance(r, dict)}
@@ -295,8 +393,10 @@ def run(
                 if isinstance(t, dict) and t.get("en") and t.get("ja"):
                     data["glossary"].setdefault(str(t["en"]).strip(), str(t["ja"]).strip())
             _save(book_dir, data)
+            _clear_live(work_id)
             set_progress(work_id, min(k, total), total, "translate")
     finally:
+        _clear_live(work_id)
         clear_progress(work_id)
     return done
 

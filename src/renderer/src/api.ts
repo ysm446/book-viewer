@@ -357,6 +357,8 @@ export interface TranslatedBlock {
   /** 訳したモデルの名前(記録の無い古い訳は空) */
   model: string
   pairs: TranslationPair[]
+  /** 翻訳中の途中経過(保存前。最後の訳文は書きかけのことがある) */
+  live?: boolean
 }
 
 /** アプリ用の本文のブロックの並びに合わせた日本語訳(訳さない・未訳のブロックは null)。 */
@@ -373,6 +375,16 @@ export interface BookTranslation {
 
 export async function getTranslation(root: string, workId: string): Promise<BookTranslation> {
   return jsonFetch(`/works/${workId}/translation?root=${encodeURIComponent(root)}`)
+}
+
+/** 翻訳中のまとまりの、保存前の訳(キーは BookContent.blocks の添字)。翻訳していなければ blocks は空。 */
+export interface TranslationLive {
+  signature: string | null
+  blocks: Record<string, TranslatedBlock>
+}
+
+export async function getTranslationLive(workId: string): Promise<TranslationLive> {
+  return jsonFetch(`/works/${workId}/translation/live`)
 }
 
 /**
