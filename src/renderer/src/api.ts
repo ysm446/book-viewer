@@ -164,6 +164,57 @@ export async function searchWorks(root: string, q: string): Promise<string[]> {
   return data.work_ids
 }
 
+/** 本文検索で見つかった箇所(アプリ用の本文の段落)。 */
+export interface PassageHit {
+  /** アプリ用の本文のブロックの添字(テキスト表示でその段落へ飛ぶ) */
+  block: number
+  /** 原本のページ(0 始まり) */
+  page: number
+  /** 章(と節)の名前。章立てが無ければ空 */
+  chapter: string
+  /** まだ読んでいない所か(読み終えた本は false) */
+  ahead: boolean
+  /** 段落の一致した語の付近 */
+  snippet: string
+  /** snippet の中の一致した語の位置 [始, 終] */
+  marks: [number, number][]
+  /** 英語の本で訳してあれば、一致した文の日本語訳(自然な訳を優先) */
+  ja: string | null
+  /** ja の中の一致した語の位置(訳文で一致したとき。そのとき snippet は一致した文の原文で、marks は空) */
+  ja_marks: [number, number][]
+  /** 何で見つかったか: 原文の語 / 訳文の語 / 意味が近いだけ(語は一致していない) */
+  match: 'text' | 'ja' | 'meaning'
+}
+
+export interface PassageBook {
+  work_id: string
+  title: string
+  author: string
+  /** この本で見つかった箇所の数 */
+  count: number
+  title_match: boolean
+  /** 本ごとのまとめでは順位の高い数件、本を指定したときは全件(ページ順) */
+  hits: PassageHit[]
+}
+
+export interface PassageSearch {
+  /** 検索に使った語(空白で分けたもの) */
+  terms: string[]
+  books: PassageBook[]
+  total: number
+  /** 見つかった箇所が多すぎて、数えるのを途中でやめたか */
+  capped: boolean
+  /** 意味の近さで探せた本の数(段落の索引のある本)と全体の数、探せなかった理由 */
+  semantic: { indexed: number; books: number; error: string | null } | null
+}
+
+/** 本文を段落の単位で探す(検索結果の画面)。workId を渡すとその本の全件。 */
+export async function searchPassages(root: string, q: string, workId?: string): Promise<PassageSearch> {
+  const params = new URLSearchParams({ root, q })
+  if (workId) params.set('work_id', workId)
+  return jsonFetch(`/roots/search/passages?${params}`)
+}
+
 export async function saveReadingState(
   root: string,
   workId: string,
@@ -289,7 +340,7 @@ export async function removeWorkTag(root: string, workId: string, name: string):
 }
 
 /** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引 / 英語の本の日本語訳)。 */
-export type JobKind = 'transcribe' | 'structure' | 'index' | 'translate'
+export type JobKind = 'transcribe' | 'structure' | 'index' | 'translate' | 'vectors'
 
 export interface QueueCurrent {
   work_id: string

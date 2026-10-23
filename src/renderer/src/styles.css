@@ -882,6 +882,194 @@ input[type='checkbox']:focus-visible {
   font-size: 13px;
 }
 
+/* ---- 本文の検索結果(右ペインに重ねる) ---- */
+.search-open-btn {
+  height: 26px;
+  font-size: 12px;
+}
+.search-page {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.search-page[hidden] {
+  display: none;
+}
+.search-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.search-page-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 480px;
+}
+.search-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.search-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+}
+.search-note,
+.search-book {
+  max-width: 760px;
+}
+.search-note {
+  padding: 16px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
+}
+.search-note.is-error {
+  color: var(--danger);
+}
+/* 検索中の表示(結果の一覧の先頭)。スピナーはステータスバーのキューと同じ .queue-spin */
+.search-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 760px;
+  padding: 12px 10px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+.search-loading-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.search-books {
+  transition: opacity 0.15s;
+}
+.search-books.is-stale {
+  opacity: 0.5;
+}
+.search-book {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.search-book-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 10px;
+}
+.search-book-thumb {
+  width: 24px;
+  height: 32px;
+}
+.search-book-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.search-book-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-sub);
+}
+.search-book-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.search-hits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.search-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text-sub);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.search-hit:hover {
+  background: var(--panel-2);
+}
+.search-hit-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.search-hit-page {
+  font-variant-numeric: tabular-nums;
+}
+.search-hit-chapter {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-snippet {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-sub);
+}
+.search-snippet strong {
+  font-weight: 600;
+  color: var(--text);
+}
+/* 英語の本の箇所に添える訳。対訳の節のまとまり(.rf-ja-group)と同じく、行頭側の線で原文と分ける */
+.search-snippet-ja {
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-sub);
+}
+.search-ja-btn {
+  flex: 0 0 auto;
+  height: 26px;
+  font-size: 12px;
+}
+.search-more {
+  height: 26px;
+  margin: 4px 10px 0;
+  font-size: 12px;
+}
+
 /* ---- リーダー ---- */
 .reader {
   display: flex;
@@ -1460,6 +1648,12 @@ input[type='checkbox']:focus-visible {
 /* 辞書を引いている単語(CSS Custom Highlight API)。選択と同じ 2 段目の面の色。 */
 ::highlight(dict-word) {
   background-color: var(--panel-3);
+}
+/* 検索結果から開いたときの、検索した語。辞書と同じ面に下線を足して見分ける。 */
+::highlight(search-hit) {
+  background-color: var(--panel-3);
+  color: var(--text);
+  text-decoration: underline 2px var(--border-strong);
 }
 .dict-popup {
   right: auto;

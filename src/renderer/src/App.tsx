@@ -26,6 +26,7 @@ import {
   type ImportResult,
   type LlmModel,
   type LlmStatus,
+  type PassageHit,
   type ScanResult,
   type SpreadOffset,
   type BookLanguage,
@@ -33,7 +34,8 @@ import {
   type WritingMode
 } from './api'
 import { ImportDialog } from './ImportDialog'
-import { Reader } from './Reader'
+import { Reader, type ReaderJump } from './Reader'
+import { SearchResults } from './SearchResults'
 import { Settings } from './Settings'
 import { ModelPicker } from './ModelPicker'
 import { SystemResourceMonitor } from './SystemResourceMonitor'
@@ -104,6 +106,12 @@ export function App(): JSX.Element {
   const [tagFilter, setTagFilter] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [searchMatches, setSearchMatches] = useState<Set<string> | null>(null)
+  // 本文の検索結果の画面(右ペインに重ねる)。一度開いたら閉じても隠すだけにする。
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchUsed, setSearchUsed] = useState(false)
+  const [searchFocus, setSearchFocus] = useState(0)
+  // 検索結果から開いた箇所(リーダーがそのページ・段落へ移動し、語をハイライトする)
+  const [readerJump, setReaderJump] = useState<ReaderJump | null>(null)
   const [llmStatus, setLlmStatus] = useState<LlmStatus>({ running: false, model: null, base_url: null })
   const [models, setModels] = useState<LlmModel[]>([])
   // backend が実際に走査したモデルフォルダ(空一覧のときに場所を示す)。
@@ -495,8 +503,39 @@ export function App(): JSX.Element {
   // 本を開き、次回起動時に復元できるよう最後に開いた本として記録する。
   function openWork(w: Work): void {
     setCurrent(w)
+    setReaderJump(null)
+    setSearchOpen(false)
     changeSettings({ lastWorkId: w.id })
   }
+
+  function openSearch(): void {
+    setSearchOpen(true)
+    setSearchUsed(true)
+    setSearchFocus((n) => n + 1)
+  }
+
+  // 検索結果の箇所を開く: その本を開き、見つかった段落へ移動して語をハイライトする。
+  function openHit(workId: string, hit: PassageHit, terms: string[]): void {
+    const w = works.find((x) => x.id === workId)
+    if (!w) return
+    setCurrent((c) => (c?.id === w.id ? c : w))
+    setReaderJump({ page: hit.page, block: hit.block, terms, seq: Date.now() })
+    setSearchOpen(false)
+    changeSettings({ lastWorkId: w.id })
+  }
+
+  // Ctrl+F で本文の検索を開く(設定などのモーダルが開いている間は開かない)。
+  useEffect(() => {
+    if (!root) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'f') return
+      if (document.querySelector('[aria-modal="true"]:not(.search-page)')) return
+      e.preventDefault()
+      openSearch()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [root])
 
   function handleDirectionChange(workId: string, direction: Direction): void {
     setWorks((ws) => ws.map((w) => (w.id === workId ? { ...w, page_direction: direction } : w)))
@@ -536,6 +575,8 @@ export function App(): JSX.Element {
   async function openRoot(target: string): Promise<void> {
     setRoot(target)
     setCurrent(null)
+    setSearchOpen(false)
+    setReaderJump(null)
     if (settings) {
       const recentRoots = [target, ...settings.recentRoots.filter((p) => p !== target)].slice(0, 8)
       setSettings({ ...settings, recentRoots, lastWorkId: null })
@@ -1066,9 +1107,18 @@ export function App(): JSX.Element {
                 className="search-input"
                 type="search"
                 placeholder="書名・著者・要約・本文で検索…"
+                title="Enter で本文の中の箇所を探す（Ctrl+F）"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && query.trim() !== '' && !e.nativeEvent.isComposing) openSearch()
+                }}
               />
+              {query.trim() !== '' && (
+                <button className="btn search-open-btn" onClick={openSearch} title="Enter / Ctrl+F">
+                  本文の中の箇所を見る
+                </button>
+              )}
               <button
                 className="filter-toggle"
                 onClick={() => setFiltersOpen((v) => !v)}
@@ -1292,11 +1342,25 @@ export function App(): JSX.Element {
               showChat={readerShowChat}
               onShowChatChange={setReaderShowChat}
               onNotify={notify}
+              jump={readerJump}
             />
           ) : (
             <div className="viewer-empty">
               {root ? '左の一覧から本を選択してください。' : 'まず管理ルートを選択してください。'}
             </div>
+          )}
+          {root && searchUsed && (
+            <SearchResults
+              key={root}
+              root={root}
+              open={searchOpen}
+              query={query}
+              onQueryChange={setQuery}
+              current={current}
+              focusKey={searchFocus}
+              onOpenHit={openHit}
+              onClose={() => setSearchOpen(false)}
+            />
           )}
         </main>
       </div>
@@ -1316,7 +1380,9 @@ export function App(): JSX.Element {
                         ? '検索の索引: '
                         : queue.current.kind === 'translate'
                           ? '日本語訳: '
-                          : ''}
+                          : queue.current.kind === 'vectors'
+                            ? '意味の索引: '
+                            : ''}
                   {queue.current.title}
                 </span>
                 <span className="sbq-bar">

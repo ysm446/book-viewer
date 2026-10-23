@@ -70,6 +70,16 @@ interface Props {
   llmReady: boolean
   /** 英語の本で、単語にマウスを乗せると英和辞書を引く */
   dictionary: boolean
+  /** 検索結果から開いた箇所。その段落へ移動し、語をハイライトする */
+  jump: TextJump | null
+}
+
+/** 検索結果から開いた箇所。block はアプリ用の本文のブロックの添字、seq は開くたびに変わる通し番号。 */
+export interface TextJump {
+  page: number
+  block: number
+  terms: string[]
+  seq: number
 }
 
 export type TranslationMode = 'off' | 'ja' | 'both'
@@ -261,6 +271,23 @@ function wordAt(
 
 /** 辞書を引いている単語のハイライト(CSS Custom Highlight API。DOM を変えないので組みは変わらない)。 */
 const DICT_HIGHLIGHT = 'dict-word'
+/** 検索結果から開いたときの、検索した語のハイライト(同上)。 */
+const SEARCH_HIGHLIGHT = 'search-hit'
+
+/**
+ * 検索結果の箇所のブロック。索引を作った後に本文を直すと添字がずれるので、そのブロックに語が無ければ
+ * 同じページで語を含むブロックを探す。それも無ければ、ページが合っていればそのブロック(英語の本を
+ * 訳文の語で探したときは原文に語が無い)、合っていなければページの先頭のブロックにする。
+ */
+function blockOfJump(blocks: ContentBlock[], jump: TextJump): number {
+  const terms = jump.terms.map((t) => t.toLowerCase())
+  const has = (b: ContentBlock | undefined): boolean =>
+    !!b && b.page === jump.page && terms.some((t) => b.md.toLowerCase().includes(t))
+  if (has(blocks[jump.block])) return jump.block
+  const i = blocks.findIndex(has)
+  if (i >= 0) return i
+  return blocks[jump.block]?.page === jump.page ? jump.block : blockOfPage(blocks, jump.page)
+}
 
 /** 辞書の意味の『』(主な意味)を太字にする。 */
 function DictMeaning({ text }: { text: string }): JSX.Element {
@@ -334,7 +361,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     trStyle,
     trStyleName,
     llmReady,
-    dictionary
+    dictionary,
+    jump
   },
   ref
 ): JSX.Element {
@@ -611,6 +639,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const reported = useRef({ page, completed: false })
   const onPageChangeRef = useRef(onPageChange)
   onPageChangeRef.current = onPageChange
+  // 検索結果から開いた箇所(済んだものの seq を覚えて、同じ指示で二度動かない)と、ハイライトする語。
+  const jumpRef = useRef(jump)
+  jumpRef.current = jump
+  const handledJump = useRef<number | null>(null)
+  const [searchTerms, setSearchTerms] = useState<string[] | null>(null)
 
   const showStage = !editing
   useEffect(() => {
@@ -699,8 +732,21 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useEffect(() => {
     if (!blocks || blocks.length === 0 || page === reported.current.page) return
     reported.current = { ...reported.current, page }
+    setSearchTerms(null)
     jumpToBlock(blockOfPage(blocks, page))
   }, [page, blocks, jumpToBlock])
+
+  // 検索結果から開いた箇所へ移動し、語をハイライトする。開いた直後は下の測る処理が最初の画面で合わせる。
+  useEffect(() => {
+    if (!jump) {
+      setSearchTerms(null)
+      return
+    }
+    if (!blocks || blocks.length === 0 || handledJump.current === jump.seq) return
+    handledJump.current = jump.seq
+    setSearchTerms(jump.terms)
+    jumpToBlock(blockOfJump(blocks, jump))
+  }, [jump, blocks, jumpToBlock])
 
   const resolveImage = useCallback(
     (src: string): string | null => {
@@ -783,8 +829,15 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     // 開いた直後(まだどの画面も出していない)は、前回の続きの画面(無ければ今の原本ページ)から始める。
     // ここで決めずに測ると先頭の画面で落ち着き、「1 ページ目を表示中」とリーダーへ伝えて保存されてしまう。
     if (pending.current === null && anchor.current === null) {
-      const key = loadAnchor(work.id, pageRef.current)
-      pending.current = { block: key ? blockOfKey(blocks, key) : blockOfPage(blocks, pageRef.current) }
+      const j = jumpRef.current
+      if (j && handledJump.current !== j.seq) {
+        handledJump.current = j.seq
+        setSearchTerms(j.terms)
+        pending.current = { block: blockOfJump(blocks, j) }
+      } else {
+        const key = loadAnchor(work.id, pageRef.current)
+        pending.current = { block: key ? blockOfKey(blocks, key) : blockOfPage(blocks, pageRef.current) }
+      }
     }
     // 移動先が別の区画なら、その区画を組んでから測る(今の区画で測って落ち着かない)。
     const p0 = pending.current
@@ -900,6 +953,30 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     }
   }, [dictRange])
 
+  // 検索した語を、今の区画の本文の中でハイライトする(区画を移ったら消す)。
+  useEffect(() => {
+    const flow = flowRef.current
+    if (!searchTerms || !flow || typeof Highlight === 'undefined') return
+    const needles = searchTerms.map((t) => t.toLowerCase()).filter((t) => t !== '')
+    const ranges: Range[] = []
+    const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT)
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = (n.nodeValue ?? '').toLowerCase()
+      for (const t of needles) {
+        for (let i = text.indexOf(t); i >= 0; i = text.indexOf(t, i + t.length)) {
+          const r = document.createRange()
+          r.setStart(n, i)
+          r.setEnd(n, i + t.length)
+          ranges.push(r)
+        }
+      }
+    }
+    CSS.highlights.set(SEARCH_HIGHLIGHT, new Highlight(...ranges))
+    return () => {
+      CSS.highlights.delete(SEARCH_HIGHLIGHT)
+    }
+  }, [searchTerms, body, showStage])
+
   // ページを送ったら・辞書を切ったら閉じる。Escape でも閉じる。
   useEffect(() => {
     closeDict()
@@ -973,6 +1050,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       }
       const nextSec = l.sec + (dir === 'next' ? 1 : -1)
       if (nextSec < 0 || nextSec >= sections.length) return
+      setSearchTerms(null)
       pending.current = dir === 'next' ? 'first' : 'last'
       setSec(nextSec)
       fade()
