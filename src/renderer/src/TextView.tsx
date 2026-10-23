@@ -63,6 +63,9 @@ interface Props {
   translation: TranslationMode
   /** 対訳で原文と訳文を並べる単位 */
   pairUnit: PairUnit
+  /** 訳の種類(id と、ツールバーに出す名前) */
+  trStyle: string
+  trStyleName: string
   /** LLM が読み込まれているか(翻訳に必要) */
   llmReady: boolean
   /** 英語の本で、単語にマウスを乗せると英和辞書を引く */
@@ -265,6 +268,16 @@ function DictMeaning({ text }: { text: string }): JSX.Element {
   return <>{parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))}</>
 }
 
+/** 段落の右クリックのメニューの幅。 */
+const BLOCK_MENU_WIDTH = 220
+
+/** 訳す対象のブロックか(バックエンドの translate._translatable と同じ: 段落・見出し・箇条・引用。場面転換は除く)。 */
+function isTranslatableBlock(b: ContentBlock | undefined): boolean {
+  return (
+    !!b && ['p', 'heading', 'list', 'quote'].includes(b.kind) && !/^\*{3,}\s*$/.test(b.md.trim())
+  )
+}
+
 /** 対訳を節の単位でまとめるときの区切り(見出しと場面転換の ***)。 */
 function isSectionBoundary(b: ContentBlock): boolean {
   return b.kind === 'heading' || /^\*{3,}\s*$/.test(b.md.trim())
@@ -318,6 +331,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     engine,
     translation,
     pairUnit,
+    trStyle,
+    trStyleName,
     llmReady,
     dictionary
   },
@@ -427,8 +442,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const [tr, setTr] = useState<BookTranslation | null>(null)
   const [trJob, setTrJob] = useState<Job>(null)
   const reloadTranslation = useCallback(async (): Promise<void> => {
-    setTr(await getTranslation(root, work.id))
-  }, [root, work.id])
+    setTr(await getTranslation(root, work.id, trStyle))
+  }, [root, work.id, trStyle])
   // 本文が作り直されたら(文字起こし・手直し)、訳の対応も取り直す。
   const signature = content?.signature
   useEffect(() => {
@@ -505,10 +520,10 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       .catch(() => {})
   }, [isEnglish, work.id, watchTranslate])
 
-  async function translate(opts: { redo?: boolean; blocks?: number[] } = {}): Promise<void> {
+  async function translate(opts: { redo?: boolean; stale?: boolean; blocks?: number[] } = {}): Promise<void> {
     setError(null)
     try {
-      await enqueueTranslate(root, work.id, opts)
+      await enqueueTranslate(root, work.id, trStyle, opts)
       setTrJob({ state: 'queued', current: 0, total: 0 })
       watchTranslate()
     } catch (e) {
@@ -700,13 +715,17 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const current = sections[sec]
   // 保存済みの訳に、翻訳中のまとまりの途中経過を重ねる。
   const trBlocks = useMemo(() => {
-    if (translation === 'off' || !tr || !content || tr.signature !== content.signature) return null
-    const liveBlocks = live && live.signature === content.signature ? Object.entries(live.blocks) : []
+    // 種類を変えた直後の、前の種類の訳は出さない(読み込み直すまで原文)
+    if (translation === 'off' || !tr || !content || tr.signature !== content.signature || tr.style !== trStyle) {
+      return null
+    }
+    const liveBlocks =
+      live && live.signature === content.signature && live.style === trStyle ? Object.entries(live.blocks) : []
     if (liveBlocks.length === 0) return tr.blocks
     const merged = tr.blocks.slice()
     for (const [k, b] of liveBlocks) merged[Number(k)] = b
     return merged
-  }, [translation, tr, content, live])
+  }, [translation, tr, content, live, trStyle])
   const body = useMemo(() => {
     if (!blocks || !current) return null
     const md = (text: string, className = 'rf-md'): JSX.Element => (
@@ -887,10 +906,15 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   }, [screen, sec, dictEnabled, closeDict])
   // 訳し直すのメニュー(この画面 / 全部)
   const [redoMenu, setRedoMenu] = useState(false)
+  // 段落の右クリックのメニュー(この段落 / この画面を訳す)。x / y は本文の面(.rf-stage)の中の位置。
+  const [blockMenu, setBlockMenu] = useState<{ block: number; x: number; y: number } | null>(null)
+  useEffect(() => {
+    setBlockMenu(null)
+  }, [screen, sec])
 
   // 辞書やメニューが開いている間の Escape は、それを閉じるだけにする。リーダーは Escape で一覧へ戻るので、
   // 先に(capture で)受けて止める。
-  const popupOpen = !!dict || redoMenu
+  const popupOpen = !!dict || redoMenu || !!blockMenu
   useEffect(() => {
     if (!popupOpen) return
     const onKey = (e: KeyboardEvent): void => {
@@ -898,10 +922,29 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       e.stopPropagation()
       closeDict()
       setRedoMenu(false)
+      setBlockMenu(null)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [popupOpen, closeDict])
+
+  // 英語の本の訳文を出しているとき、段落を右クリックすると、その段落・この画面だけを訳すメニューを出す。
+  function onFlowContextMenu(e: React.MouseEvent): void {
+    if (!isEnglish || translation === 'off' || !blocks) return
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-b]')
+    const stage = stageRef.current
+    if (!el || !stage) return
+    const index = Number(el.dataset.b)
+    if (!isTranslatableBlock(blocks[index])) return
+    e.preventDefault()
+    closeDict()
+    const box = stage.getBoundingClientRect()
+    setBlockMenu({
+      block: index,
+      x: Math.min(e.clientX - box.left, box.width - BLOCK_MENU_WIDTH - 8),
+      y: Math.min(e.clientY - box.top, box.height - 120)
+    })
+  }
 
   /** 今の画面に出ているブロック(blocks の添字)。 */
   function blocksOnScreen(): number[] {
@@ -1005,11 +1048,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
               className="text-toolbar-note"
               title={
                 tr && tr.models.length > 0
-                  ? `訳したモデル: ${tr.models.map((m) => `${m.model || '記録なし'}（${m.blocks} 段落）`).join('、')}`
-                  : undefined
+                  ? `訳の種類: ${trStyleName}\n訳したモデル: ${tr.models.map((m) => `${m.model || '記録なし'}（${m.blocks} 段落）`).join('、')}`
+                  : `訳の種類: ${trStyleName}`
               }
             >
-              訳 {tr?.done ?? 0} / {tr?.total ?? 0}
+              {trStyleName} {tr?.done ?? 0} / {tr?.total ?? 0}
             </span>
             {trJob ? (
               <>
@@ -1047,6 +1090,21 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                       残り {tr.total - tr.done} 段落を翻訳
                     </button>
                   )}
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      const blocks = blocksOnScreen()
+                      if (blocks.length > 0) void translate({ blocks })
+                    }}
+                    disabled={!llmReady}
+                    title={
+                      llmReady
+                        ? '今の画面に出ている段落を訳します（訳してある段落は訳し直します）。段落を右クリックすると、その段落だけを訳せます'
+                        : 'モデルを読み込むと翻訳できます'
+                    }
+                  >
+                    この画面を訳す
+                  </button>
                   {tr.done > 0 && (
                     <div className="text-redo">
                       <button
@@ -1067,17 +1125,18 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         <>
                           <div className="popup-backdrop" onClick={() => setRedoMenu(false)} />
                           <div className="ex-popup text-redo-menu" role="menu" aria-label="訳し直す">
-                            <button
-                              className="ex-popup-item"
-                              role="menuitem"
-                              onClick={() => {
-                                setRedoMenu(false)
-                                const blocks = blocksOnScreen()
-                                if (blocks.length > 0) void translate({ blocks })
-                              }}
-                            >
-                              この画面の段落を訳し直す
-                            </button>
+                            {tr.stale > 0 && (
+                              <button
+                                className="ex-popup-item"
+                                role="menuitem"
+                                onClick={() => {
+                                  setRedoMenu(false)
+                                  void translate({ stale: true })
+                                }}
+                              >
+                                指示を書き直す前の段落を訳し直す（{tr.stale}）
+                              </button>
+                            )}
                             <button
                               className="ex-popup-item"
                               role="menuitem"
@@ -1235,6 +1294,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   style={{ width: geo.width, height: geo.height }}
                   onMouseMove={onFlowMouseMove}
                   onMouseLeave={onFlowMouseLeave}
+                  onContextMenu={onFlowContextMenu}
                 >
                   <div
                     ref={flowRef}
@@ -1265,6 +1325,56 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   aria-label={vertical ? '前へ' : '次へ'}
                   onClick={() => turn(vertical ? 'prev' : 'next')}
                 />
+                {blockMenu && tr && (
+                  <>
+                    <div className="popup-backdrop" onClick={() => setBlockMenu(null)} />
+                    <div
+                      className="ex-popup block-menu"
+                      role="menu"
+                      aria-label="段落の翻訳"
+                      style={{ left: blockMenu.x, top: blockMenu.y, width: BLOCK_MENU_WIDTH }}
+                    >
+                      {(() => {
+                        const why = !llmReady
+                          ? 'モデルを読み込むと訳せます'
+                          : trJob
+                            ? '翻訳が終わるか、中止してから使えます'
+                            : undefined
+                        const translated = !!tr.blocks[blockMenu.block]
+                        return (
+                          <>
+                            <button
+                              className="ex-popup-item"
+                              role="menuitem"
+                              disabled={!!why}
+                              title={why}
+                              onClick={() => {
+                                const b = blockMenu.block
+                                setBlockMenu(null)
+                                void translate({ blocks: [b] })
+                              }}
+                            >
+                              {translated ? 'この段落を訳し直す' : 'この段落を訳す'}
+                            </button>
+                            <button
+                              className="ex-popup-item"
+                              role="menuitem"
+                              disabled={!!why}
+                              title={why}
+                              onClick={() => {
+                                setBlockMenu(null)
+                                const bs = blocksOnScreen()
+                                if (bs.length > 0) void translate({ blocks: bs })
+                              }}
+                            >
+                              この画面の段落を訳す
+                            </button>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </>
+                )}
                 {dict && (
                   <div
                     className="ex-popup dict-popup"

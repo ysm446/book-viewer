@@ -7,6 +7,7 @@ import {
   pageUrl,
   removeWorkTag,
   saveReadingState,
+  getTranslationStyles,
   setWorkDirection,
   setWorkLanguage,
   setWorkSpreadOffset,
@@ -15,6 +16,7 @@ import {
   type Bookmark,
   type Direction,
   type SpreadOffset,
+  type TranslationStyle,
   type Work,
   type WritingMode
 } from './api'
@@ -36,6 +38,7 @@ import {
   type TextFont
 } from './textFonts'
 import { TocPanel } from './TocPanel'
+import { TranslationStylesDialog } from './TranslationStylesDialog'
 import { useStoredFlag } from './useStoredFlag'
 import type { AppSettings } from '../../preload'
 
@@ -106,6 +109,8 @@ interface TextPrefs {
   /** 英語の本の訳文の出し方と対訳の単位(その本だけ。ほかの本には引き継がない) */
   translation?: TranslationMode
   pairUnit?: PairUnit
+  /** 訳の種類の id */
+  trStyle?: string
   /** 旧形式(アプリのテーマが無かった頃の背景。黒は既定の意味だった)。読むだけ */
   theme?: string
 }
@@ -335,6 +340,21 @@ export function Reader({
   const [pairUnit, setPairUnit] = useState<PairUnit>(() =>
     PAIR_UNITS.some((u) => u.value === bookPrefs.pairUnit) ? bookPrefs.pairUnit! : 'sentence'
   )
+  // 訳の種類(本ごと)。一覧は管理ルートの種類(組み込み + 自分で作った種類)。
+  const [trStyles, setTrStyles] = useState<TranslationStyle[]>([])
+  const [trStyleId, setTrStyleId] = useState<string>(() => bookPrefs.trStyle ?? 'natural')
+  const [trStyleMenuOpen, setTrStyleMenuOpen] = useState(false)
+  const [stylesDialog, setStylesDialog] = useState(false)
+  useEffect(() => {
+    if (language !== 'en') return
+    getTranslationStyles(root)
+      .then((r) => setTrStyles(r.styles))
+      .catch(() => {})
+  }, [root, language])
+  // 消した種類を選んでいたら自然な訳にする(一覧を読み込むまでは選んだまま)
+  const trStyle =
+    trStyles.length === 0 || trStyles.some((s) => s.id === trStyleId) ? trStyleId : 'natural'
+  const trStyleName = trStyles.find((s) => s.id === trStyle)?.name ?? '自然な訳'
   // 英語の本の辞書(単語にマウスを乗せて引く)。全部の本で共通。
   const [dictionary, setDictionary] = useStoredFlag('readerDictionary', true)
   // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
@@ -353,6 +373,7 @@ export function Reader({
     if (patch.surface !== undefined) setTextTheme(patch.surface)
     if (patch.translation !== undefined) setTranslation(patch.translation)
     if (patch.pairUnit !== undefined) setPairUnit(patch.pairUnit)
+    if (patch.trStyle !== undefined) setTrStyleId(patch.trStyle)
   }
   useEffect(() => {
     if (!prefsTouched.current) return
@@ -363,9 +384,10 @@ export function Reader({
       font: textFont,
       surface: textTheme,
       translation,
-      pairUnit
+      pairUnit,
+      trStyle: trStyleId
     })
-  }, [work.id, textLayout, textSize, textWeight, textFont, textTheme, translation, pairUnit])
+  }, [work.id, textLayout, textSize, textWeight, textFont, textTheme, translation, pairUnit, trStyleId])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -574,10 +596,11 @@ export function Reader({
       // Ctrl+S / Ctrl+B などの修飾キー付きはブラウザや OS の操作なので拾わない。
       if (e.ctrlKey || e.metaKey || e.altKey) return
       // 書体・太さのメニューが開いている間は、Escape でメニューだけ閉じる(一覧へは戻らない)。
-      if (fontMenuOpen || weightMenuOpen) {
+      if (fontMenuOpen || weightMenuOpen || trStyleMenuOpen) {
         if (e.key === 'Escape') {
           setFontMenuOpen(false)
           setWeightMenuOpen(false)
+          setTrStyleMenuOpen(false)
         }
         return
       }
@@ -607,7 +630,8 @@ export function Reader({
     viewMode,
     textVertical,
     fontMenuOpen,
-    weightMenuOpen
+    weightMenuOpen,
+    trStyleMenuOpen
   ])
 
   // F9: 表示中のページ画像を、アーカイブ内の元データのまま保存する(見開きなら 2 枚)。
@@ -957,6 +981,58 @@ export function Reader({
             {activeDisplayTab === 'translation' && (
               <>
                 <div className="display-item">
+                  <span className="display-label">訳の種類</span>
+                  <div className="font-picker">
+                    <button
+                      className="reader-dir font-picker-btn"
+                      onClick={() => setTrStyleMenuOpen((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={trStyleMenuOpen}
+                      title="表示・翻訳する訳の種類（訳し方）。種類ごとに訳を保存します"
+                    >
+                      <span className="font-picker-label">{trStyleName}</span>
+                      <span className="font-picker-caret" aria-hidden="true">
+                        ▾
+                      </span>
+                    </button>
+                    {trStyleMenuOpen && (
+                      <>
+                        <div className="popup-backdrop" onClick={() => setTrStyleMenuOpen(false)} />
+                        <div className="ex-popup font-picker-menu" role="menu" aria-label="訳の種類">
+                          {trStyles.map((st) => (
+                            <button
+                              key={st.id}
+                              className={`ex-popup-item font-picker-item ${trStyle === st.id ? 'is-current' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={trStyle === st.id}
+                              onClick={() => {
+                                changeTextPrefs({ trStyle: st.id })
+                                setTrStyleMenuOpen(false)
+                              }}
+                            >
+                              <span className="font-picker-check" aria-hidden="true">
+                                {trStyle === st.id ? '✓' : ''}
+                              </span>
+                              {st.name}
+                            </button>
+                          ))}
+                          <div className="ex-popup-sep" />
+                          <button
+                            className="ex-popup-item"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrStyleMenuOpen(false)
+                              setStylesDialog(true)
+                            }}
+                          >
+                            種類を作る・編集する…
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="display-item">
                   <span className="display-label">日本語訳</span>
                   <div className="seg" role="group" aria-label="日本語訳">
                     {TRANSLATION_MODES.map((m) => (
@@ -1007,6 +1083,19 @@ export function Reader({
             )}
           </div>
         </div>
+      )}
+
+      {stylesDialog && (
+        <TranslationStylesDialog
+          root={root}
+          styles={trStyles}
+          initialId={trStyle}
+          onClose={() => setStylesDialog(false)}
+          onSaved={(styles) => {
+            setTrStyles(styles)
+            setStylesDialog(false)
+          }}
+        />
       )}
 
       {showTags && (
@@ -1077,6 +1166,8 @@ export function Reader({
             engine={settings.transcribeEngine ?? 'yomitoku'}
             translation={language === 'en' ? translation : 'off'}
             pairUnit={pairUnit}
+            trStyle={trStyle}
+            trStyleName={trStyleName}
             llmReady={llmReady}
             dictionary={dictionary}
           />

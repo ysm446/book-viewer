@@ -69,7 +69,8 @@ def enqueue(
     - transcribe: 文字起こし(pages 省略時は未処理の全ページ、force で作り直し。engine を使う)
     - structure: 章立てと要約(force で章立てから作り直し)
     - index: 本文検索の索引
-    - translate: 英語の本の日本語訳(force で全部訳し直し、extra["blocks"] でそのブロックだけ訳し直し)
+    - translate: 英語の本の日本語訳(extra["style"] の訳の種類で。force で全部訳し直し、extra["blocks"] で
+      そのブロックだけ、extra["stale"] で指示を書き直す前に訳したブロックだけ訳し直し)
     """
     if kind not in KINDS:
         raise ValueError(f"未対応のジョブです: {kind}")
@@ -173,12 +174,15 @@ def _run(job: dict) -> None:
     elif job["kind"] == "translate":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")
+        extra = job.get("extra") or {}
         translate.run(
             root,
             work_id,
             base_url,
+            style_id=extra.get("style") or translate.DEFAULT_STYLE,
             redo=job.get("force", False),
-            indices=(job.get("extra") or {}).get("blocks"),
+            stale=bool(extra.get("stale")),
+            indices=extra.get("blocks"),
             model=st.get("model"),
             cancel_check=cancel_check,
         )

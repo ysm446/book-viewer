@@ -1451,6 +1451,11 @@ input[type='checkbox']:focus-visible {
   border-inline-start: 2px solid var(--border);
   margin-bottom: 1em;
 }
+/* 段落の右クリックのメニュー(この段落 / この画面を訳す)。位置は TextView がポインタの位置から決める。 */
+.block-menu {
+  right: auto;
+  writing-mode: horizontal-tb;
+}
 /* 英語の本の辞書(単語にマウスを乗せると出る)。位置と幅は TextView が単語の位置から決める。 */
 /* 辞書を引いている単語(CSS Custom Highlight API)。選択と同じ 2 段目の面の色。 */
 ::highlight(dict-word) {
@@ -2812,6 +2817,73 @@ input[type='checkbox']:focus-visible {
 }
 .import-footer-spacer {
   flex: 1;
+}
+
+/* 訳の種類の作成・編集(英語の本)。左に種類の一覧(設定画面のナビと同じ .settings-nav-item)、右に名前と指示。 */
+.styles-modal {
+  width: 720px;
+  max-width: 92vw;
+  height: min(560px, 85vh);
+}
+.styles-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.styles-list {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.styles-list .settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.styles-list-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.styles-list-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.styles-add {
+  margin-top: 8px;
+}
+.styles-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+.styles-editor .text-edit-area {
+  min-height: 180px;
+}
+.styles-name {
+  flex: 0 0 auto;
+}
+.styles-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
+}
+.styles-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
 }
 
 /* 未取り込みアーカイブの案内(一覧の上) */

@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-10-23 10:15
+更新日時: 2026-10-23 10:46
 
 目的と完成形は [goals.md](goals.md)、現在の進捗は [progress.md](progress.md)。
 
@@ -158,7 +158,16 @@ API は `GET /api/dictionary?word=`(書かれた形と、語尾を外した元�
   (段落全体を 1 組にしないよう指示する)。文を順に漏れなく覆っていない組は捨て、次の実行で訳し直す。
 - 一度に約 2,500 字の続いたブロックを渡し、直前の 2 ブロックの原文と訳を文脈に添える。固有名詞・作中の用語は
   LLM に `terms` で返させて訳語表(`glossary`)に溜め、原文に出てくる語だけを次のまとまりに渡す。
-- 保存は本フォルダの `translation/ja.json`(`{schema, blocks: {本文の指紋: {head, src, pairs, at}}, glossary}`)。
+- 訳の種類: 訳し方の指示(`instructions`)ごとに訳を分ける。組み込みは「自然な訳」(natural)と「直訳」(literal)で
+  `translate.BUILTIN_STYLES` に持ち、自分で作った種類は管理ルートの `.book-viewer/translation_styles.json`
+  (`{styles: [{id, name, instructions, updated_at}]}`。API は `GET|PUT /api/translation-styles`)に置く。
+  種類が書けるのは訳し方だけで、文の組・漏れなく覆う・強調の記号・訳語表・見出しの決まりは `_prompt` が固定で
+  加える(訳し方と食い違うときはこちらを優先と指示する)。ブロックごとに指示の指紋 `style_hash` を残し、指示を書き直した
+  あとに古い指示で訳したブロックを数える(`stale`。「訳し直す」の「指示を書き直す前の段落を訳し直す」)。
+  表示・翻訳する種類は本ごとに選ぶ(「訳・辞書」の「訳の種類」)。
+- 保存は本フォルダの `translation/<種類の id>.json`(`{schema, blocks: {本文の指紋: {head, src, pairs, model, style_hash, at}}}`)と、
+  種類をまたいで共有する訳語表 `translation/glossary.json`。種類ができる前の `translation/ja.json` は、読むときに
+  `natural.json` と `glossary.json` へ移す。
   ブロックは md の SHA-1 で引くので、`content.json` を作り直しても本文が同じブロックの訳は残る(文字起こしの
   やり直し・手直しで本文が変わったブロックだけ未訳に戻る)。まとまりごとに保存するので、止めても続きから訳せる。
 - ストリーミング: まとまりの訳は `llm.chat_stream`(json_schema 付き)で受け取り、0.4 秒ごとに書きかけの JSON から
@@ -168,7 +177,8 @@ API は `GET /api/dictionary?word=`(書かれた形と、語尾を外した元�
   重ねて表示する。進み具合(保存したまとまり)が変わったら訳全体を読み込み直す。
 - `get_translation` はブロックの並びに合わせて `{head, model, pairs: [{en, ja}]}`(未訳・訳さないブロックは null)と、
   訳したモデルごとのブロック数 `models` を返す。
-- 訳し直し: `redo`(全部)と `blocks`(content.json の添字。画面の「この画面の段落を訳し直す」)。どちらも訳語表は残し、
+- 段落の単位: 段落の右クリックのメニューから、その段落・今の画面の段落だけを訳す(`blocks` を渡す。未訳でも訳してあっても)。
+- 訳し直し: `redo`(全部)と `blocks`(content.json の添字。ツールバーの「この画面を訳す」・段落の右クリック)。どちらも訳語表は残し、
   新しい訳が取れなかったブロックは前の訳のままにする。訳したモデルの名前(llama-server に読み込んだ GGUF の名前)を
   ブロックごとに `model` として残す(モデルを変えて訳し直したときに見分けるため。記録の無い古い訳は空)。
 - 表示(`TextView`): 「表示」の「日本語訳」(原文 / 訳文 / 対訳、本ごと)と「対訳の単位」(文 / 段落 / 節)。

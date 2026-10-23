@@ -361,10 +361,41 @@ export interface TranslatedBlock {
   live?: boolean
 }
 
+/** 訳の種類(訳し方の指示)。builtin は組み込み(自然な訳・直訳)で、変えられない。 */
+export interface TranslationStyle {
+  id: string
+  name: string
+  instructions: string
+  builtin: boolean
+  updated_at?: string
+}
+
+/** 訳の種類の一覧(組み込みが先。自分で作った種類は管理ルートに保存されている)。 */
+export async function getTranslationStyles(root: string): Promise<{ styles: TranslationStyle[] }> {
+  return jsonFetch(`/translation-styles?root=${encodeURIComponent(root)}`)
+}
+
+/** 自分で作った訳の種類を保存する(一覧から外した種類は消える。新しい種類は id を省く)。 */
+export async function saveTranslationStyles(
+  root: string,
+  styles: { id?: string; name: string; instructions: string }[]
+): Promise<{ styles: TranslationStyle[] }> {
+  return jsonFetch(`/translation-styles`, {
+    method: 'PUT',
+    body: JSON.stringify({ root, styles })
+  })
+}
+
 /** アプリ用の本文のブロックの並びに合わせた日本語訳(訳さない・未訳のブロックは null)。 */
 export interface BookTranslation {
   /** どの本文(BookContent.signature)に合わせたものか */
   signature: string
+  /** 訳の種類 */
+  style: string
+  /** 今と違う指示(訳し方を書き直す前)で訳したブロックの数 */
+  stale: number
+  /** この本に訳がある種類ごとの、訳したブロック数 */
+  styles: Record<string, number>
   /** 訳す対象のブロック数と、訳したブロック数 */
   total: number
   done: number
@@ -373,13 +404,17 @@ export interface BookTranslation {
   blocks: (TranslatedBlock | null)[]
 }
 
-export async function getTranslation(root: string, workId: string): Promise<BookTranslation> {
-  return jsonFetch(`/works/${workId}/translation?root=${encodeURIComponent(root)}`)
+export async function getTranslation(root: string, workId: string, style: string): Promise<BookTranslation> {
+  return jsonFetch(
+    `/works/${workId}/translation?root=${encodeURIComponent(root)}&style=${encodeURIComponent(style)}`
+  )
 }
 
 /** 翻訳中のまとまりの、保存前の訳(キーは BookContent.blocks の添字)。翻訳していなければ blocks は空。 */
 export interface TranslationLive {
   signature: string | null
+  /** 訳している種類 */
+  style: string | null
   blocks: Record<string, TranslatedBlock>
 }
 
@@ -389,16 +424,24 @@ export async function getTranslationLive(workId: string): Promise<TranslationLiv
 
 /**
  * 日本語訳をジョブキューに積む(LLM の読み込みが必要)。
- * redo で訳したブロックも全部訳し直し、blocks を渡すとそのブロック(BookContent.blocks の添字)だけ訳し直す。
+ * style の訳の種類で訳す。redo で訳したブロックも全部、stale で指示を書き直す前に訳したブロックだけ、
+ * blocks を渡すとそのブロック(BookContent.blocks の添字)だけ訳し直す。
  */
 export async function enqueueTranslate(
   root: string,
   workId: string,
-  opts: { redo?: boolean; blocks?: number[] } = {}
+  style: string,
+  opts: { redo?: boolean; stale?: boolean; blocks?: number[] } = {}
 ): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/translate`, {
     method: 'POST',
-    body: JSON.stringify({ root, redo: opts.redo ?? false, blocks: opts.blocks ?? null })
+    body: JSON.stringify({
+      root,
+      style,
+      redo: opts.redo ?? false,
+      stale: opts.stale ?? false,
+      blocks: opts.blocks ?? null
+    })
   })
 }
 
