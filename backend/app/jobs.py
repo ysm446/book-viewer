@@ -1,6 +1,7 @@
 """重い処理のジョブキュー(単一ワーカーで順次処理)。
 
-文字起こし(transcribe)・章立てと要約(structure)・本文検索の索引(index)を 1 件ずつ直列に行う。
+文字起こし(transcribe)・章立てと要約(structure)・本文検索の索引(index)・英語の本の日本語訳
+(translate)を 1 件ずつ直列に行う。
 GPU(YomiToku・llama-server)を取り合わないように、すべてこのキュー経由にする。
 """
 
@@ -10,10 +11,10 @@ import threading
 import time
 from pathlib import Path
 
-from . import embedding, llm_server, progress, search, structure, transcribe
+from . import embedding, llm_server, progress, search, structure, transcribe, translate
 from .db import connect
 
-KINDS = ("transcribe", "structure", "index")
+KINDS = ("transcribe", "structure", "index", "translate")
 
 _lock = threading.Lock()
 _cond = threading.Condition(_lock)
@@ -68,6 +69,7 @@ def enqueue(
     - transcribe: 文字起こし(pages 省略時は未処理の全ページ、force で作り直し。engine を使う)
     - structure: 章立てと要約(force で章立てから作り直し)
     - index: 本文検索の索引
+    - translate: 英語の本の日本語訳(force で訳し直し)
     """
     if kind not in KINDS:
         raise ValueError(f"未対応のジョブです: {kind}")
@@ -168,6 +170,10 @@ def _run(job: dict) -> None:
         )
     elif job["kind"] == "index":
         embedding.build_index(root, work_id, cancel_check=cancel_check)
+    elif job["kind"] == "translate":
+        if not base_url:
+            raise RuntimeError("モデルが読み込まれていません。")
+        translate.run(root, work_id, base_url, redo=job.get("force", False), cancel_check=cancel_check)
 
 
 def _worker() -> None:

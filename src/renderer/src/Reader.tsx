@@ -20,7 +20,13 @@ import {
 } from './api'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
-import { TextView, type TextTheme, type TextViewHandle } from './TextView'
+import {
+  TextView,
+  type PairUnit,
+  type TextTheme,
+  type TextViewHandle,
+  type TranslationMode
+} from './TextView'
 import { TEXT_FONTS, parseTextFont, textFontOf, type TextFont } from './textFonts'
 import { TocPanel } from './TocPanel'
 import { useStoredFlag } from './useStoredFlag'
@@ -48,6 +54,18 @@ const TEXT_LAYOUTS: { value: TextLayout; label: string }[] = [
   { value: 'vertical', label: '縦書き' }
 ]
 
+/** 英語の本の訳文の出し方(原文だけ / 訳文だけ / 対訳)と、対訳でまとめる単位。 */
+const TRANSLATION_MODES: { value: TranslationMode; label: string }[] = [
+  { value: 'off', label: '原文' },
+  { value: 'ja', label: '訳文' },
+  { value: 'both', label: '対訳' }
+]
+const PAIR_UNITS: { value: PairUnit; label: string }[] = [
+  { value: 'sentence', label: '文' },
+  { value: 'paragraph', label: '段落' },
+  { value: 'section', label: '節' }
+]
+
 /** テキスト表示の本文の面の配色(テーマどおり = アプリのテーマのまま)。 */
 const TEXT_THEMES: { value: TextTheme; label: string }[] = [
   { value: 'auto', label: 'テーマどおり' },
@@ -73,6 +91,9 @@ interface TextPrefs {
   size: number
   font: TextFont
   surface: TextTheme
+  /** 英語の本の訳文の出し方と対訳の単位(その本だけ。ほかの本には引き継がない) */
+  translation?: TranslationMode
+  pairUnit?: PairUnit
   /** 旧形式(アプリのテーマが無かった頃の背景。黒は既定の意味だった)。読むだけ */
   theme?: string
 }
@@ -288,6 +309,12 @@ export function Reader({
   useEffect(() => {
     localStorage.setItem('readerTextSurface', textTheme)
   }, [textTheme])
+  const [translation, setTranslation] = useState<TranslationMode>(() =>
+    TRANSLATION_MODES.some((m) => m.value === bookPrefs.translation) ? bookPrefs.translation! : 'off'
+  )
+  const [pairUnit, setPairUnit] = useState<PairUnit>(() =>
+    PAIR_UNITS.some((u) => u.value === bookPrefs.pairUnit) ? bookPrefs.pairUnit! : 'sentence'
+  )
   // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
   const prefsTouched = useRef(false)
   function changeTextPrefs(patch: Partial<TextPrefs>): void {
@@ -296,11 +323,20 @@ export function Reader({
     if (patch.size !== undefined) setTextSize(patch.size)
     if (patch.font !== undefined) setTextFont(patch.font)
     if (patch.surface !== undefined) setTextTheme(patch.surface)
+    if (patch.translation !== undefined) setTranslation(patch.translation)
+    if (patch.pairUnit !== undefined) setPairUnit(patch.pairUnit)
   }
   useEffect(() => {
     if (!prefsTouched.current) return
-    saveBookTextPrefs(work.id, { layout: textLayout, size: textSize, font: textFont, surface: textTheme })
-  }, [work.id, textLayout, textSize, textFont, textTheme])
+    saveBookTextPrefs(work.id, {
+      layout: textLayout,
+      size: textSize,
+      font: textFont,
+      surface: textTheme,
+      translation,
+      pairUnit
+    })
+  }, [work.id, textLayout, textSize, textFont, textTheme, translation, pairUnit])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -787,6 +823,40 @@ export function Reader({
                   ))}
                 </div>
               </div>
+              {language === 'en' && (
+                <div className="display-item">
+                  <span className="display-label">日本語訳</span>
+                  <div className="seg" role="group" aria-label="日本語訳">
+                    {TRANSLATION_MODES.map((m) => (
+                      <button
+                        key={m.value}
+                        className={`seg-btn ${translation === m.value ? 'seg-active' : ''}`}
+                        onClick={() => changeTextPrefs({ translation: m.value })}
+                        title="原文だけ / 訳文だけ / 原文と訳文を並べて（対訳）読む。訳していない段落は原文のまま"
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {language === 'en' && translation === 'both' && (
+                <div className="display-item">
+                  <span className="display-label">対訳の単位</span>
+                  <div className="seg" role="group" aria-label="対訳の単位">
+                    {PAIR_UNITS.map((u) => (
+                      <button
+                        key={u.value}
+                        className={`seg-btn ${pairUnit === u.value ? 'seg-active' : ''}`}
+                        onClick={() => changeTextPrefs({ pairUnit: u.value })}
+                        title="原文と訳文を、1 文ずつ / 段落ごと / 節（見出しや場面の区切りまで）ごとに並べる"
+                      >
+                        {u.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
           {settings.pageMode === 'double' && viewMode === 'image' && (
@@ -869,6 +939,9 @@ export function Reader({
             theme={textTheme}
             animate={animate}
             engine={settings.transcribeEngine ?? 'yomitoku'}
+            translation={language === 'en' ? translation : 'off'}
+            pairUnit={pairUnit}
+            llmReady={llmReady}
           />
         ) : (
         <>

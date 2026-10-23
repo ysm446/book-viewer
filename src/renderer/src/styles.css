@@ -1412,6 +1412,23 @@ input[type='checkbox']:focus-visible {
 .rf-code {
   break-inside: avoid;
 }
+/* 英語の本の対訳。訳文は原文と同じ大きさで、色を一段落として見分ける。
+   文の単位は原文と訳文の 1 組を途中で分けない。 */
+.rf-ja {
+  color: var(--text-sub);
+}
+.rf-pair {
+  margin-bottom: 0.8em;
+  break-inside: avoid;
+}
+.rf-pair .rf-md p {
+  margin: 0;
+}
+.rf-ja-group {
+  padding-inline-start: 0.8em;
+  border-inline-start: 2px solid var(--border);
+  margin-bottom: 1em;
+}
 .rf-foot {
   position: absolute;
   left: 0;

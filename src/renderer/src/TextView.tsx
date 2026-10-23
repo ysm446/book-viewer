@@ -12,17 +12,21 @@ import {
 import {
   cancelJob,
   enqueueTranscribe,
+  enqueueTranslate,
   figureUrl,
   getContent,
   getQueue,
   getPageText,
+  getTranslation,
   pageUrl,
   savePageText,
   type BookContent,
+  type BookTranslation,
   type ContentBlock,
   type LowLine,
   type PageText,
   type TranscribeEngine,
+  type TranslatedBlock,
   type Work
 } from './api'
 import { Markdown } from './Markdown'
@@ -49,7 +53,16 @@ interface Props {
   animate: boolean
   /** 文字起こしのエンジン(設定) */
   engine: TranscribeEngine
+  /** 英語の本の訳文の出し方(原文だけ / 訳文だけ / 対訳)。日本語の本は off */
+  translation: TranslationMode
+  /** 対訳で原文と訳文を並べる単位 */
+  pairUnit: PairUnit
+  /** LLM が読み込まれているか(翻訳に必要) */
+  llmReady: boolean
 }
+
+export type TranslationMode = 'off' | 'ja' | 'both'
+export type PairUnit = 'sentence' | 'paragraph' | 'section'
 
 /** 本文の面の配色。auto はアプリのテーマのまま、ほかは styles.css の .rf-stage.theme-* で差し替える。 */
 export type TextTheme = 'auto' | 'dark' | 'sepia' | 'light'
@@ -171,6 +184,16 @@ function saveAnchor(workId: string, key: AnchorKey, reached: number): void {
   }
 }
 
+/** 対訳を節の単位でまとめるときの区切り(見出しと場面転換の ***)。 */
+function isSectionBoundary(b: ContentBlock): boolean {
+  return b.kind === 'heading' || /^\*{3,}\s*$/.test(b.md.trim())
+}
+
+/** 訳したブロックの訳文(見出し・箇条の記号を付けて Markdown にする)。 */
+function jaText(t: TranslatedBlock): string {
+  return t.head + t.pairs.map((p) => p.ja).join('')
+}
+
 /** 1 画面の大きさと段の数。 */
 interface Geometry {
   width: number
@@ -199,7 +222,22 @@ type Pending = 'first' | 'last' | { block: number } | null
  * 読書位置は原本のページ番号でリーダーと共有する。文字起こしと本文の手直しは原本のページ単位。
  */
 export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
-  { root, work, page, onPageChange, vertical, columns, fontSize, font, theme, animate, engine },
+  {
+    root,
+    work,
+    page,
+    onPageChange,
+    vertical,
+    columns,
+    fontSize,
+    font,
+    theme,
+    animate,
+    engine,
+    translation,
+    pairUnit,
+    llmReady
+  },
   ref
 ): JSX.Element {
   const [content, setContent] = useState<BookContent | null>(null)
@@ -299,6 +337,86 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       })
       .catch(() => {})
   }, [work.id, watch])
+
+  // ---- 日本語訳(英語の本) ----
+
+  const isEnglish = work.language === 'en'
+  const [tr, setTr] = useState<BookTranslation | null>(null)
+  const [trJob, setTrJob] = useState<Job>(null)
+  const reloadTranslation = useCallback(async (): Promise<void> => {
+    setTr(await getTranslation(root, work.id))
+  }, [root, work.id])
+  // 本文が作り直されたら(文字起こし・手直し)、訳の対応も取り直す。
+  const signature = content?.signature
+  useEffect(() => {
+    if (!isEnglish || !signature) return
+    reloadTranslation().catch((e) => setError((e as Error).message))
+  }, [isEnglish, signature, reloadTranslation])
+
+  // 翻訳の進み具合を追う。訳しながら読めるよう、進んでいる間もときどき訳を読み込み直す。
+  const trPolling = useRef(false)
+  const watchTranslate = useCallback((): void => {
+    if (trPolling.current) return
+    trPolling.current = true
+    let loadedTr = Date.now()
+    let lastCurrent = -1
+    const tick = async (): Promise<void> => {
+      if (!alive.current) {
+        trPolling.current = false
+        return
+      }
+      try {
+        const q = await getQueue()
+        const cur = q.current?.work_id === work.id && q.current.kind === 'translate' ? q.current : null
+        const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'translate')
+        if (cur) setTrJob({ state: 'running', current: cur.current, total: cur.total })
+        else if (pending) setTrJob({ state: 'queued', current: 0, total: 0 })
+        const progressed = cur !== null && cur.current !== lastCurrent
+        lastCurrent = cur ? cur.current : -1
+        if (progressed && Date.now() - loadedTr > 10000) {
+          loadedTr = Date.now()
+          await reloadTranslation()
+        }
+        if (!cur && !pending) {
+          const recent = q.recent.filter((r) => r.work_id === work.id && r.kind === 'translate')
+          const last = recent[recent.length - 1]
+          if (last?.status === 'error') setError(last.error ?? '翻訳に失敗しました')
+          await reloadTranslation()
+          setTrJob(null)
+          trPolling.current = false
+          return
+        }
+      } catch {
+        // 一時的な取得失敗は次の周期で取り直す
+      }
+      setTimeout(() => void tick(), 2000)
+    }
+    void tick()
+  }, [work.id, reloadTranslation])
+
+  // 開いた時点で既に翻訳中なら進み具合を追う。
+  useEffect(() => {
+    if (!isEnglish) return
+    getQueue()
+      .then((q) => {
+        const active =
+          (q.current?.work_id === work.id && q.current.kind === 'translate') ||
+          q.pending.some((j) => j.work_id === work.id && j.kind === 'translate')
+        if (active) watchTranslate()
+      })
+      .catch(() => {})
+  }, [isEnglish, work.id, watchTranslate])
+
+  async function translate(redo = false): Promise<void> {
+    setError(null)
+    try {
+      await enqueueTranslate(root, work.id, redo)
+      setTrJob({ state: 'queued', current: 0, total: 0 })
+      watchTranslate()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   async function transcribe(target?: number[], force = false): Promise<void> {
     setError(null)
@@ -471,6 +589,68 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     jumpToBlock(blockOfPage(blocks, page))
   }, [page, blocks, jumpToBlock])
 
+  const resolveImage = useCallback(
+    (src: string): string | null => {
+      const m = src.match(FIGURE_SRC_RE)
+      return m ? figureUrl(root, work.id, m[1]) : null
+    },
+    [root, work.id]
+  )
+
+  // 区画の本文。ページ送りのたびに作り直さないよう、区画が変わったときだけ作る。
+  // 英語の本で訳文を出すときは、ブロック(data-b。位置の基準)はそのままに、中身を訳文・対訳にする。
+  const current = sections[sec]
+  const trBlocks =
+    translation !== 'off' && tr && content && tr.signature === content.signature ? tr.blocks : null
+  const body = useMemo(() => {
+    if (!blocks || !current) return null
+    const md = (text: string, className = 'rf-md'): JSX.Element => (
+      <Markdown text={text} className={className} resolveImage={resolveImage} eagerImages />
+    )
+    const out: JSX.Element[] = []
+    // 節の単位の対訳: 区切り(見出し・場面転換)までの訳文を、まとめて原文の後に出す。
+    let group: JSX.Element[] = []
+    const flush = (key: string): void => {
+      if (group.length > 0) out.push(<div key={key} className="rf-ja-group">{group}</div>)
+      group = []
+    }
+    for (let i = current.start; i < current.end; i++) {
+      const b = blocks[i]
+      const t = trBlocks?.[i] ?? null
+      const cls = `rf-block rf-${b.kind}`
+      if (pairUnit === 'section' && translation === 'both' && isSectionBoundary(b)) flush(`g${i}`)
+      if (!t) {
+        // 訳さないブロック(図など)と、まだ訳していないブロックは原文のまま
+        out.push(<div key={i} data-b={i} className={cls}>{md(b.md)}</div>)
+      } else if (translation === 'ja') {
+        out.push(<div key={i} data-b={i} className={cls}>{md(jaText(t))}</div>)
+      } else if (pairUnit === 'sentence') {
+        out.push(
+          <div key={i} data-b={i} className={`${cls} rf-pairs`}>
+            {t.pairs.map((p, k) => (
+              <div key={k} className="rf-pair">
+                {md((k === 0 ? t.head : '') + p.en)}
+                {md((k === 0 ? t.head : '') + p.ja, 'rf-md rf-ja')}
+              </div>
+            ))}
+          </div>
+        )
+      } else if (pairUnit === 'paragraph' || b.kind === 'heading') {
+        out.push(
+          <div key={i} data-b={i} className={cls}>
+            {md(b.md)}
+            {md(jaText(t), 'rf-md rf-ja')}
+          </div>
+        )
+      } else {
+        out.push(<div key={i} data-b={i} className={cls}>{md(b.md)}</div>)
+        group.push(<div key={i}>{md(jaText(t), 'rf-md rf-ja')}</div>)
+      }
+    }
+    flush('g-end')
+    return out
+  }, [blocks, current, resolveImage, trBlocks, translation, pairUnit])
+
   // 組んだ結果を測る: 各ブロックが何画面目にあるかを調べ、移動先(無ければ読んでいた場所)の画面を出す。
   useLayoutEffect(() => {
     const flow = flowRef.current
@@ -519,7 +699,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     setScreens(count)
     setScreen(target)
     settle(target)
-  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle, blocks, work.id])
+  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle, blocks, work.id, body])
 
   const turn = useCallback(
     (dir: 'next' | 'prev'): void => {
@@ -559,28 +739,6 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     remeasure.current = requestAnimationFrame(() => setTick((t) => t + 1))
   }
   useEffect(() => () => cancelAnimationFrame(remeasure.current), [])
-
-  const resolveImage = useCallback(
-    (src: string): string | null => {
-      const m = src.match(FIGURE_SRC_RE)
-      return m ? figureUrl(root, work.id, m[1]) : null
-    },
-    [root, work.id]
-  )
-
-  // 区画の本文。ページ送りのたびに作り直さないよう、区画が変わったときだけ作る。
-  const current = sections[sec]
-  const body = useMemo(
-    () =>
-      blocks && current
-        ? blocks.slice(current.start, current.end).map((b, i) => (
-            <div key={current.start + i} data-b={current.start + i} className={`rf-block rf-${b.kind}`}>
-              <Markdown text={b.md} className="rf-md" resolveImage={resolveImage} eagerImages />
-            </div>
-          ))
-        : null,
-    [blocks, current, resolveImage]
-  )
 
   const doneCount = content?.pages_done ?? 0
   const remaining = work.page_count - doneCount
@@ -625,6 +783,47 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
               残り {remaining} ページを文字起こし
             </button>
           )
+        )}
+        {isEnglish && (translation !== 'off' || trJob) && (
+          <>
+            <span className="text-toolbar-note">
+              訳 {tr?.done ?? 0} / {tr?.total ?? 0}
+            </span>
+            {trJob ? (
+              <>
+                <span className="analyze-bar text-toolbar-bar">
+                  <span
+                    className="analyze-bar-fill"
+                    style={{
+                      width: `${trJob.total > 0 ? Math.round((trJob.current / trJob.total) * 100) : 0}%`
+                    }}
+                  />
+                </span>
+                <span className="text-toolbar-note">
+                  {trJob.state === 'queued' ? '順番待ち…' : `翻訳中 ${trJob.current}/${trJob.total}`}
+                </span>
+                <button className="btn" onClick={() => void cancelJob(work.id)}>
+                  中止
+                </button>
+              </>
+            ) : (
+              tr &&
+              tr.total > tr.done && (
+                <button
+                  className="btn"
+                  onClick={() => void translate()}
+                  disabled={!llmReady}
+                  title={
+                    llmReady
+                      ? 'まだ訳していない段落を先頭から順に日本語に訳します（時間がかかります。読みながら待てます）'
+                      : 'モデルを読み込むと翻訳できます'
+                  }
+                >
+                  残り {tr.total - tr.done} 段落を翻訳
+                </button>
+              )
+            )}
+          </>
         )}
         <span className="text-toolbar-spacer" />
         {!editing && (

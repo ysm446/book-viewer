@@ -288,8 +288,8 @@ export async function removeWorkTag(root: string, workId: string, name: string):
   )
 }
 
-/** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引)。 */
-export type JobKind = 'transcribe' | 'structure' | 'index'
+/** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引 / 英語の本の日本語訳)。 */
+export type JobKind = 'transcribe' | 'structure' | 'index' | 'translate'
 
 export interface QueueCurrent {
   work_id: string
@@ -343,6 +343,40 @@ export interface BookContent {
 
 export async function getContent(root: string, workId: string): Promise<BookContent> {
   return jsonFetch(`/works/${workId}/content?root=${encodeURIComponent(root)}`)
+}
+
+/** 訳文の 1 組(原文の 1 文、または続いた数文 ↔ 訳文)。 */
+export interface TranslationPair {
+  en: string
+  ja: string
+}
+
+/** 訳したブロック。head は見出し・箇条の記号など、訳さない頭の部分(`## ` など)。 */
+export interface TranslatedBlock {
+  head: string
+  pairs: TranslationPair[]
+}
+
+/** アプリ用の本文のブロックの並びに合わせた日本語訳(訳さない・未訳のブロックは null)。 */
+export interface BookTranslation {
+  /** どの本文(BookContent.signature)に合わせたものか */
+  signature: string
+  /** 訳す対象のブロック数と、訳したブロック数 */
+  total: number
+  done: number
+  blocks: (TranslatedBlock | null)[]
+}
+
+export async function getTranslation(root: string, workId: string): Promise<BookTranslation> {
+  return jsonFetch(`/works/${workId}/translation?root=${encodeURIComponent(root)}`)
+}
+
+/** 日本語訳をジョブキューに積む(LLM の読み込みが必要)。redo で訳したブロックも訳し直す。 */
+export async function enqueueTranslate(root: string, workId: string, redo = false): Promise<JobQueue> {
+  return jsonFetch(`/works/${workId}/translate`, {
+    method: 'POST',
+    body: JSON.stringify({ root, redo })
+  })
 }
 
 /** 読み取りの確信度が低い本文の行(要確認の候補)。 */
