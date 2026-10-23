@@ -49,6 +49,8 @@ interface Props {
   columns: 1 | 2
   /** 本文の文字サイズ(px) */
   fontSize: number
+  /** 本文の文字の太さ(CSS の font-weight) */
+  weight: number
   /** 本文の書体 */
   font: TextFont
   /** 本文の面の配色(黒 / セピア / 白) */
@@ -309,6 +311,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     vertical,
     columns,
     fontSize,
+    weight,
     font,
     theme,
     animate,
@@ -574,13 +577,13 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useEffect(() => {
     if (!fontFamily) return
     let alive = true
-    void document.fonts.load(`16px ${fontFamily}`, 'あ').then(() => {
+    void document.fonts.load(`${weight} 16px ${fontFamily}`, 'あ').then(() => {
       if (alive) setTick((t) => t + 1)
     })
     return () => {
       alive = false
     }
-  }, [fontFamily])
+  }, [fontFamily, weight])
   const stageRef = useRef<HTMLDivElement | null>(null)
   const flowRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
@@ -801,7 +804,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     setScreens(count)
     setScreen(target)
     settle(target)
-  }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle, blocks, work.id, body])
+  }, [sections, sec, geo, vertical, fontSize, weight, font, tick, showStage, settle, blocks, work.id, body])
 
   // ---- 辞書(英語の本。単語にマウスを乗せて引く) ----
 
@@ -1244,6 +1247,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         columnGap: GAP,
                         fontSize,
                         fontFamily: fontFamily ?? undefined,
+                        fontWeight: weight,
+                        '--rf-weight': weight,
                         transform: vertical ? `translateY(${-shift}px)` : `translateX(${-shift}px)`,
                         '--rf-w': `${(geo.width - GAP * (geo.columns - 1)) / geo.columns}px`,
                         '--rf-h': `${geo.height}px`

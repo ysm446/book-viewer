@@ -1613,7 +1613,8 @@ input[type='checkbox']:focus-visible {
 .book-md h4 {
   margin: 1.2em 0 0.6em;
   line-height: 1.5;
-  font-weight: 600;
+  /* 本文より 1 段太く(本文の太さは表示設定で変えられる。既定の 400 なら 600) */
+  font-weight: min(900, calc(var(--rf-weight, 400) + 200));
 }
 .book-md h1 {
   font-size: 1.25em;
@@ -1728,14 +1729,50 @@ input[type='checkbox']:focus-visible {
 }
 
 /* ---- 表示設定バー(リーダー) ---- */
+/* 表示設定バー。左に「本」「文字」「訳・辞書」のタブ、右に選んだタブの項目(折り返す)。
+   タブの色は設定画面のナビ(.settings-nav-item)と同じ決まり: hover で --panel-2、選択中は --panel-3 + 600。 */
 .reader-display {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 20px;
+  align-items: flex-start;
+  gap: 12px;
   padding: 8px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+}
+.display-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+.display-tab {
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.display-tab:hover {
+  background: var(--panel-2);
+}
+.display-tab.is-active,
+.display-tab.is-active:hover {
+  background: var(--panel-3);
+  color: var(--text);
+  font-weight: 600;
+}
+.display-items {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
 }
 .display-item {
   display: flex;
@@ -1773,6 +1810,14 @@ input[type='checkbox']:focus-visible {
   flex: 1;
   text-align: left;
   white-space: nowrap;
+}
+/* 太さのプルダウン(書体と同じ作り。項目はその太さで見せる)。太さが 1 種類だけの書体では押せない。 */
+.weight-picker-btn {
+  min-width: 96px;
+}
+.font-picker-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .font-picker-caret {
   font-size: 10px;

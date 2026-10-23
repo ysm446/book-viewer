@@ -27,7 +27,14 @@ import {
   type TextViewHandle,
   type TranslationMode
 } from './TextView'
-import { TEXT_FONTS, parseTextFont, textFontOf, type TextFont } from './textFonts'
+import {
+  TEXT_FONTS,
+  nearestWeight,
+  parseTextFont,
+  textFontOf,
+  weightName,
+  type TextFont
+} from './textFonts'
 import { TocPanel } from './TocPanel'
 import { useStoredFlag } from './useStoredFlag'
 import type { AppSettings } from '../../preload'
@@ -45,6 +52,9 @@ function chatContextChars(ctxSize: number): number {
 
 /** 画像(スクリーンショット)で読むか、文字起こしした本文で読むか。 */
 type ViewMode = 'image' | 'text'
+
+/** 表示設定バーのタブ(本 / 文字 / 訳・辞書)。 */
+type DisplayTab = 'book' | 'text' | 'translation'
 
 /** テキスト表示の本文の組み方。book は原本の書字方向どおり。 */
 type TextLayout = 'book' | 'horizontal' | 'vertical'
@@ -89,6 +99,8 @@ const TEXT_SIZES: { value: number; label: string }[] = [
 interface TextPrefs {
   layout: TextLayout
   size: number
+  /** 文字の太さ(CSS の font-weight。書体に用意された太さから選ぶ) */
+  weight?: number
   font: TextFont
   surface: TextTheme
   /** 英語の本の訳文の出し方と対訳の単位(その本だけ。ほかの本には引き継がない) */
@@ -300,6 +312,14 @@ export function Reader({
     localStorage.setItem('readerTextFont', textFont)
   }, [textFont])
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  // 文字の太さ。書体に無い太さは、いちばん近い太さにする(書体を変えたときも)。
+  const [textWeight, setTextWeight] = useState<number>(() =>
+    nearestWeight(textFont, Number(bookPrefs.weight ?? localStorage.getItem('readerTextWeight') ?? 400) || 400)
+  )
+  useEffect(() => {
+    localStorage.setItem('readerTextWeight', String(textWeight))
+  }, [textWeight])
+  const [weightMenuOpen, setWeightMenuOpen] = useState(false)
   const [textTheme, setTextTheme] = useState<TextTheme>(
     () =>
       parseTextTheme(bookPrefs.surface, bookPrefs.theme) ??
@@ -323,7 +343,13 @@ export function Reader({
     prefsTouched.current = true
     if (patch.layout !== undefined) setTextLayout(patch.layout)
     if (patch.size !== undefined) setTextSize(patch.size)
-    if (patch.font !== undefined) setTextFont(patch.font)
+    if (patch.font !== undefined) {
+      setTextFont(patch.font)
+      const font = patch.font
+      setTextWeight((w) => nearestWeight(font, patch.weight ?? w))
+    } else if (patch.weight !== undefined) {
+      setTextWeight(patch.weight)
+    }
     if (patch.surface !== undefined) setTextTheme(patch.surface)
     if (patch.translation !== undefined) setTranslation(patch.translation)
     if (patch.pairUnit !== undefined) setPairUnit(patch.pairUnit)
@@ -333,12 +359,13 @@ export function Reader({
     saveBookTextPrefs(work.id, {
       layout: textLayout,
       size: textSize,
+      weight: textWeight,
       font: textFont,
       surface: textTheme,
       translation,
       pairUnit
     })
-  }, [work.id, textLayout, textSize, textFont, textTheme, translation, pairUnit])
+  }, [work.id, textLayout, textSize, textWeight, textFont, textTheme, translation, pairUnit])
   const textVertical = (textLayout === 'book' ? writingMode : textLayout) === 'vertical'
   const textRef = useRef<TextViewHandle | null>(null)
   // テキスト表示で本の終わり(全ページ文字起こし済みの本文の最後の画面)まで読んだか。
@@ -348,6 +375,25 @@ export function Reader({
   const [showTags, setShowTags] = useStoredFlag('readerShowTags', false)
   // 表示設定バー(読み方向・見開きずらし・本文の組み方など)の開閉。
   const [showDisplay, setShowDisplay] = useStoredFlag('readerShowDisplay', false)
+  // 表示設定バーは項目を「本」「文字」「訳・辞書」のタブに分け、選んだタブの項目だけを出す(最後に開いたタブを覚える)。
+  const [displayTab, setDisplayTab] = useState<DisplayTab>(() => {
+    const v = localStorage.getItem('readerDisplayTab')
+    return v === 'book' || v === 'text' || v === 'translation' ? v : 'text'
+  })
+  useEffect(() => {
+    localStorage.setItem('readerDisplayTab', displayTab)
+  }, [displayTab])
+  const displayTabs: { id: DisplayTab; label: string }[] = [
+    { id: 'book', label: '本' },
+    ...(viewMode === 'text' ? [{ id: 'text' as const, label: '文字' }] : []),
+    ...(viewMode === 'text' && language === 'en' ? [{ id: 'translation' as const, label: '訳・辞書' }] : [])
+  ]
+  // 今の表示で出ないタブ(画像表示の「文字」など)を覚えていたら、テキスト表示は「文字」、画像表示は「本」を開く。
+  const activeDisplayTab: DisplayTab = displayTabs.some((t) => t.id === displayTab)
+    ? displayTab
+    : viewMode === 'text'
+      ? 'text'
+      : 'book'
   const [tagInput, setTagInput] = useState('')
 
   const spreads = useMemo(
@@ -527,9 +573,12 @@ export function Reader({
       if (document.querySelector('[aria-modal="true"]')) return
       // Ctrl+S / Ctrl+B などの修飾キー付きはブラウザや OS の操作なので拾わない。
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      // 書体のメニューが開いている間は、Escape でメニューだけ閉じる(一覧へは戻らない)。
-      if (fontMenuOpen) {
-        if (e.key === 'Escape') setFontMenuOpen(false)
+      // 書体・太さのメニューが開いている間は、Escape でメニューだけ閉じる(一覧へは戻らない)。
+      if (fontMenuOpen || weightMenuOpen) {
+        if (e.key === 'Escape') {
+          setFontMenuOpen(false)
+          setWeightMenuOpen(false)
+        }
         return
       }
       // テキスト表示はアプリが組んだ画面を送る。進む向きは本文の組み方で決まる(縦書きは左へ)。
@@ -557,7 +606,8 @@ export function Reader({
     settings.pageMode,
     viewMode,
     textVertical,
-    fontMenuOpen
+    fontMenuOpen,
+    weightMenuOpen
   ])
 
   // F9: 表示中のページ画像を、アーカイブ内の元データのまま保存する(見開きなら 2 枚)。
@@ -692,140 +742,220 @@ export function Reader({
 
       {showDisplay && (
         <div className="reader-display">
-          <div className="display-item">
-            <span className="display-label">読み方向</span>
-            <select
-              className="reader-dir"
-              value={dirOverride}
-              onChange={(e) => changeDirection(e.target.value as Direction)}
-              title="この本の読み進め方向"
-            >
-              <option value="default">
-                既定（{settings.defaultDirection === 'rtl' ? '右→左' : '左→右'}）
-              </option>
-              <option value="rtl">右 → 左</option>
-              <option value="ltr">左 → 右</option>
-            </select>
+          <div className="display-tabs" role="tablist" aria-label="表示の項目">
+            {displayTabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={activeDisplayTab === t.id}
+                className={`display-tab ${activeDisplayTab === t.id ? 'is-active' : ''}`}
+                onClick={() => setDisplayTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
-          <div className="display-item">
-            <span className="display-label">本の言語</span>
-            <div className="seg" role="group" aria-label="本の言語">
-              {(['ja', 'en'] as const).map((l) => (
-                <button
-                  key={l}
-                  className={`seg-btn ${language === l ? 'seg-active' : ''}`}
-                  onClick={() => changeLanguage(l)}
-                  title="文字起こしの読み方（行のつなぎ方・文の終わりの判定など）を本の言語に合わせます。文字起こし済みのページは、やり直すと新しい言語で読み直します"
-                >
-                  {l === 'ja' ? '日本語' : '英語'}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="display-item">
-            <span className="display-label">原本の書字方向</span>
-            <div className="seg" role="group" aria-label="原本の書字方向">
-              {(['horizontal', 'vertical'] as const).map((m) => (
-                <button
-                  key={m}
-                  className={`seg-btn ${writingMode === m ? 'seg-active' : ''}`}
-                  onClick={() => changeWritingMode(m)}
-                  title="原本の書字方向。文字起こしの読み順と、本文の組み方「原本どおり」に使います"
-                >
-                  {m === 'horizontal' ? '横書き' : '縦書き'}
-                </button>
-              ))}
-            </div>
-          </div>
-          {viewMode === 'text' && (
-            <>
-              <div className="display-item">
-                <span className="display-label">本文の組み方</span>
-                <div className="seg" role="group" aria-label="本文の組み方">
-                  {TEXT_LAYOUTS.map((l) => (
-                    <button
-                      key={l.value}
-                      className={`seg-btn ${textLayout === l.value ? 'seg-active' : ''}`}
-                      onClick={() => changeTextPrefs({ layout: l.value })}
-                      title="テキスト表示の本文を横書き / 縦書きのどちらで組むか（原本の書字方向とは別に選べます）"
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="display-item">
-                <span className="display-label">文字サイズ</span>
-                <div className="seg" role="group" aria-label="文字サイズ">
-                  {TEXT_SIZES.map((t) => (
-                    <button
-                      key={t.value}
-                      className={`seg-btn ${textSize === t.value ? 'seg-active' : ''}`}
-                      onClick={() => changeTextPrefs({ size: t.value })}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="display-item">
-                <span className="display-label">書体</span>
-                <div className="font-picker">
-                  <button
-                    className="reader-dir font-picker-btn"
-                    onClick={() => setFontMenuOpen((v) => !v)}
-                    aria-haspopup="menu"
-                    aria-expanded={fontMenuOpen}
-                    title="テキスト表示の本文の書体"
+          <div className="display-items" role="tabpanel">
+            {activeDisplayTab === 'book' && (
+              <>
+                <div className="display-item">
+                  <span className="display-label">読み方向</span>
+                  <select
+                    className="reader-dir"
+                    value={dirOverride}
+                    onChange={(e) => changeDirection(e.target.value as Direction)}
+                    title="この本の読み進め方向"
                   >
-                    <span className="font-picker-label">{textFontOf(textFont).label}</span>
-                    <span className="font-picker-caret" aria-hidden="true">
-                      ▾
-                    </span>
-                  </button>
-                  {fontMenuOpen && (
-                    <>
-                      <div className="popup-backdrop" onClick={() => setFontMenuOpen(false)} />
-                      <div className="ex-popup font-picker-menu" role="menu" aria-label="書体">
-                        {TEXT_FONTS.map((f) => (
-                          <button
-                            key={f.value}
-                            className={`ex-popup-item font-picker-item ${textFont === f.value ? 'is-current' : ''}`}
-                            role="menuitemradio"
-                            aria-checked={textFont === f.value}
-                            style={{ fontFamily: f.family ?? undefined }}
-                            onClick={() => {
-                              changeTextPrefs({ font: f.value })
-                              setFontMenuOpen(false)
-                            }}
-                          >
-                            <span className="font-picker-check" aria-hidden="true">
-                              {textFont === f.value ? '✓' : ''}
-                            </span>
-                            {f.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                    <option value="default">
+                      既定（{settings.defaultDirection === 'rtl' ? '右→左' : '左→右'}）
+                    </option>
+                    <option value="rtl">右 → 左</option>
+                    <option value="ltr">左 → 右</option>
+                  </select>
                 </div>
-              </div>
-              <div className="display-item">
-                <span className="display-label">背景</span>
-                <div className="seg" role="group" aria-label="背景">
-                  {TEXT_THEMES.map((t) => (
+                <div className="display-item">
+                  <span className="display-label">言語</span>
+                  <div className="seg" role="group" aria-label="本の言語">
+                    {(['ja', 'en'] as const).map((l) => (
+                      <button
+                        key={l}
+                        className={`seg-btn ${language === l ? 'seg-active' : ''}`}
+                        onClick={() => changeLanguage(l)}
+                        title="文字起こしの読み方（行のつなぎ方・文の終わりの判定など）を本の言語に合わせます。文字起こし済みのページは、やり直すと新しい言語で読み直します"
+                      >
+                        {l === 'ja' ? '日本語' : '英語'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="display-item">
+                  <span className="display-label">原本の書字方向</span>
+                  <div className="seg" role="group" aria-label="原本の書字方向">
+                    {(['horizontal', 'vertical'] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={`seg-btn ${writingMode === m ? 'seg-active' : ''}`}
+                        onClick={() => changeWritingMode(m)}
+                        title="原本の書字方向。文字起こしの読み順と、本文の組み方「原本どおり」に使います"
+                      >
+                        {m === 'horizontal' ? '横書き' : '縦書き'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {settings.pageMode === 'double' && viewMode === 'image' && (
+                  <div className="display-item">
+                    <span className="display-label">見開きのペア</span>
                     <button
-                      key={t.value}
-                      className={`seg-btn ${textTheme === t.value ? 'seg-active' : ''}`}
-                      onClick={() => changeTextPrefs({ surface: t.value })}
-                      title="テキスト表示の本文の背景と文字の色"
+                      className={`btn ${effectiveOffset === 1 ? 'btn-active' : ''}`}
+                      onClick={toggleOffset}
+                      title="見開きのペアを1ページずらす（S）"
                     >
-                      {t.label}
+                      ずらす{effectiveOffset === 1 ? '中' : ''}
                     </button>
-                  ))}
+                  </div>
+                )}
+              </>
+            )}
+            {activeDisplayTab === 'text' && (
+              <>
+                <div className="display-item">
+                  <span className="display-label">組み方</span>
+                  <div className="seg" role="group" aria-label="本文の組み方">
+                    {TEXT_LAYOUTS.map((l) => (
+                      <button
+                        key={l.value}
+                        className={`seg-btn ${textLayout === l.value ? 'seg-active' : ''}`}
+                        onClick={() => changeTextPrefs({ layout: l.value })}
+                        title="テキスト表示の本文を横書き / 縦書きのどちらで組むか（原本の書字方向とは別に選べます）"
+                      >
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              {language === 'en' && (
+                <div className="display-item">
+                  <span className="display-label">サイズ</span>
+                  <div className="seg" role="group" aria-label="文字サイズ">
+                    {TEXT_SIZES.map((t) => (
+                      <button
+                        key={t.value}
+                        className={`seg-btn ${textSize === t.value ? 'seg-active' : ''}`}
+                        onClick={() => changeTextPrefs({ size: t.value })}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="display-item">
+                  <span className="display-label">書体</span>
+                  <div className="font-picker">
+                    <button
+                      className="reader-dir font-picker-btn"
+                      onClick={() => setFontMenuOpen((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={fontMenuOpen}
+                      title="テキスト表示の本文の書体"
+                    >
+                      <span className="font-picker-label">{textFontOf(textFont).label}</span>
+                      <span className="font-picker-caret" aria-hidden="true">
+                        ▾
+                      </span>
+                    </button>
+                    {fontMenuOpen && (
+                      <>
+                        <div className="popup-backdrop" onClick={() => setFontMenuOpen(false)} />
+                        <div className="ex-popup font-picker-menu" role="menu" aria-label="書体">
+                          {TEXT_FONTS.map((f) => (
+                            <button
+                              key={f.value}
+                              className={`ex-popup-item font-picker-item ${textFont === f.value ? 'is-current' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={textFont === f.value}
+                              style={{ fontFamily: f.family ?? undefined }}
+                              onClick={() => {
+                                changeTextPrefs({ font: f.value })
+                                setFontMenuOpen(false)
+                              }}
+                            >
+                              <span className="font-picker-check" aria-hidden="true">
+                                {textFont === f.value ? '✓' : ''}
+                              </span>
+                              {f.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="display-item">
+                  <span className="display-label">文字の太さ</span>
+                  <div className="font-picker">
+                    <button
+                      className="reader-dir font-picker-btn weight-picker-btn"
+                      onClick={() => setWeightMenuOpen((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={weightMenuOpen}
+                      disabled={textFontOf(textFont).weights.length < 2}
+                      title={
+                        textFontOf(textFont).weights.length < 2
+                          ? 'この書体は太さが 1 種類だけです'
+                          : 'テキスト表示の本文の文字の太さ（書体に用意されている太さから選びます）'
+                      }
+                    >
+                      <span className="font-picker-label">{weightName(textFont, textWeight)}</span>
+                      <span className="font-picker-caret" aria-hidden="true">
+                        ▾
+                      </span>
+                    </button>
+                    {weightMenuOpen && (
+                      <>
+                        <div className="popup-backdrop" onClick={() => setWeightMenuOpen(false)} />
+                        <div className="ex-popup font-picker-menu" role="menu" aria-label="文字の太さ">
+                          {textFontOf(textFont).weights.map((w) => (
+                            <button
+                              key={w.value}
+                              className={`ex-popup-item font-picker-item ${textWeight === w.value ? 'is-current' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={textWeight === w.value}
+                              style={{ fontFamily: textFontOf(textFont).family ?? undefined, fontWeight: w.value }}
+                              onClick={() => {
+                                changeTextPrefs({ weight: w.value })
+                                setWeightMenuOpen(false)
+                              }}
+                            >
+                              <span className="font-picker-check" aria-hidden="true">
+                                {textWeight === w.value ? '✓' : ''}
+                              </span>
+                              {w.name}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="display-item">
+                  <span className="display-label">背景</span>
+                  <div className="seg" role="group" aria-label="背景">
+                    {TEXT_THEMES.map((t) => (
+                      <button
+                        key={t.value}
+                        className={`seg-btn ${textTheme === t.value ? 'seg-active' : ''}`}
+                        onClick={() => changeTextPrefs({ surface: t.value })}
+                        title="テキスト表示の本文の背景と文字の色"
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            {activeDisplayTab === 'translation' && (
+              <>
                 <div className="display-item">
                   <span className="display-label">日本語訳</span>
                   <div className="seg" role="group" aria-label="日本語訳">
@@ -841,8 +971,23 @@ export function Reader({
                     ))}
                   </div>
                 </div>
-              )}
-              {language === 'en' && (
+                {translation === 'both' && (
+                  <div className="display-item">
+                    <span className="display-label">対訳の単位</span>
+                    <div className="seg" role="group" aria-label="対訳の単位">
+                      {PAIR_UNITS.map((u) => (
+                        <button
+                          key={u.value}
+                          className={`seg-btn ${pairUnit === u.value ? 'seg-active' : ''}`}
+                          onClick={() => changeTextPrefs({ pairUnit: u.value })}
+                          title="原文と訳文を、1 文ずつ / 段落ごと / 節（見出しや場面の区切りまで）ごとに並べる"
+                        >
+                          {u.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="display-item">
                   <span className="display-label">辞書</span>
                   <div className="seg" role="group" aria-label="辞書">
@@ -858,38 +1003,9 @@ export function Reader({
                     ))}
                   </div>
                 </div>
-              )}
-              {language === 'en' && translation === 'both' && (
-                <div className="display-item">
-                  <span className="display-label">対訳の単位</span>
-                  <div className="seg" role="group" aria-label="対訳の単位">
-                    {PAIR_UNITS.map((u) => (
-                      <button
-                        key={u.value}
-                        className={`seg-btn ${pairUnit === u.value ? 'seg-active' : ''}`}
-                        onClick={() => changeTextPrefs({ pairUnit: u.value })}
-                        title="原文と訳文を、1 文ずつ / 段落ごと / 節（見出しや場面の区切りまで）ごとに並べる"
-                      >
-                        {u.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-          {settings.pageMode === 'double' && viewMode === 'image' && (
-            <div className="display-item">
-              <span className="display-label">見開きのペア</span>
-              <button
-                className={`btn ${effectiveOffset === 1 ? 'btn-active' : ''}`}
-                onClick={toggleOffset}
-                title="見開きのペアを1ページずらす（S）"
-              >
-                ずらす{effectiveOffset === 1 ? '中' : ''}
-              </button>
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -954,6 +1070,7 @@ export function Reader({
             vertical={textVertical}
             columns={settings.pageMode === 'double' ? 2 : 1}
             fontSize={textSize}
+            weight={textWeight}
             font={textFont}
             theme={textTheme}
             animate={animate}
