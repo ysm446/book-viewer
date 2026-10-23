@@ -25,6 +25,7 @@ import { ReaderChat } from './ReaderChat'
 import {
   TextView,
   type PairUnit,
+  type TextJump,
   type TextTheme,
   type TextViewHandle,
   type TranslationMode
@@ -174,7 +175,12 @@ interface ReaderProps {
   onClose?: () => void
   /** 右下の一時通知を出す(F9 のページ画像保存の結果など)。 */
   onNotify: (message: string, path: string | null, error?: boolean) => void
+  /** 検索結果から開いた箇所。そのページへ移動し、テキスト表示ではその段落の語をハイライトする。 */
+  jump?: ReaderJump | null
 }
+
+/** 検索結果から開いた箇所(seq は同じ箇所を開き直したときも移動させるための通し番号)。 */
+export type ReaderJump = TextJump
 
 /** ratios[i] = 画像の縦横比(横/縦)。1 より大きいと横長。 */
 type Ratios = Record<number, number>
@@ -239,7 +245,8 @@ export function Reader({
   showChat,
   onShowChatChange,
   onClose,
-  onNotify
+  onNotify,
+  jump = null
 }: ReaderProps): JSX.Element {
   const count = work.page_count
   const [dirOverride, setDirOverride] = useState<Direction>(
@@ -257,7 +264,7 @@ export function Reader({
 
   const [ratios, setRatios] = useState<Ratios>({})
   const [page, setPage] = useState(() =>
-    Math.min(Math.max(work.last_page, 0), Math.max(0, count - 1))
+    Math.min(Math.max(jump ? jump.page : work.last_page, 0), Math.max(0, count - 1))
   )
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [scrubberVisible, setScrubberVisible] = useState(false)
@@ -554,6 +561,25 @@ export function Reader({
   function jumpTo(p: number): void {
     setPage(Math.min(Math.max(p, 0), count - 1))
   }
+
+  // 検索結果から開いた箇所のページへ移る。テキスト表示は TextView が段落まで合わせて、
+  // 進んだページを知らせてくる(ここでページを変えると、TextView がページの先頭へ移り直してしまう)。
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+  useEffect(() => {
+    if (jump && viewModeRef.current === 'image') setPage(Math.min(Math.max(jump.page, 0), count - 1))
+  }, [jump, count])
+  // テキスト表示へ渡す箇所。表示を切り替えたら捨てる(作り直した TextView が検索の箇所へ戻らないように)。
+  const [textJump, setTextJump] = useState(jump)
+  useEffect(() => {
+    setTextJump(jump)
+  }, [jump])
+  const shownMode = useRef(viewMode)
+  useEffect(() => {
+    if (shownMode.current === viewMode) return
+    shownMode.current = viewMode
+    setTextJump(null)
+  }, [viewMode])
 
   function removeBookmark(id: number): void {
     setBookmarks((bs) => bs.filter((b) => b.id !== id))
@@ -1170,6 +1196,7 @@ export function Reader({
             trStyleName={trStyleName}
             llmReady={llmReady}
             dictionary={dictionary}
+            jump={textJump}
           />
         ) : (
         <>

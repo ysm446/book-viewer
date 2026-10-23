@@ -82,18 +82,30 @@ def stop() -> None:
         pass
 
 
+def loaded() -> bool:
+    """埋め込みモデルを読み込んであるか。"""
+    with _model_lock:
+        return _model is not None
+
+
+# 索引づくり(ジョブのスレッド)と検索の質問(API のスレッド)が同時に埋め込まないようにする
+# (同じトークナイザーを 2 つのスレッドから使うと失敗することがある)。
+_encode_lock = threading.Lock()
+
+
 def embed(texts: list[str], *, query: bool = False) -> list[list[float]]:
     """文のリストを埋め込みベクトル(正規化済み)にする。query=True は質問の側、False は本文の側。"""
     prefix = _QUERY_PREFIX if query else _DOCUMENT_PREFIX
     model = _get_model()
     try:
-        vectors = model.encode(
-            [prefix + t for t in texts],
-            batch_size=_BATCH,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
+        with _encode_lock:
+            vectors = model.encode(
+                [prefix + t for t in texts],
+                batch_size=_BATCH,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
     except Exception as e:  # noqa: BLE001 - GPU のメモリ不足なども埋め込みの失敗として伝える
         raise EmbeddingError(f"埋め込みに失敗しました: {e}") from e
     return [v.tolist() for v in vectors]
@@ -256,3 +268,167 @@ def search(
     return [
         {"page": rows[i]["page"], "text": rows[i]["text"], "score": float(scores[i])} for i in order
     ]
+
+
+# ---- 段落の意味で探す索引(検索結果の画面) ------------------------------------------
+#
+# チャットの本文検索(上の chunks。数百字のまとまり・1 冊ずつ手で作る)とは別に、アプリ用の本文の
+# ブロック(段落)ごとにベクトルを持つ。検索結果からその段落へ飛べるようにするため。文字起こしの
+# ジョブの後と、スキャンで古い本を見つけたときに、キューのジョブ(vectors)で自動で作る。
+# 英語の本も原文のまま Ruri で埋め込む(日本語の質問でも近い段落が上位に来ることを確かめた)。
+
+# 埋め込む段落の種類と、短すぎて意味を持たない段落の長さ(字)。
+_PASSAGE_KINDS = ("p", "heading", "list", "quote", "figure")
+_PASSAGE_MIN = 8
+
+
+def _passage_texts(root: Path, work_id: str) -> tuple[str, list[tuple[int, int, str]]]:
+    """(アプリ用の本文の指紋, [(ブロックの添字, 原本のページ, 埋め込む本文)])。"""
+    data = content.load(root, work_id)
+    out = []
+    for i, b in enumerate(data["blocks"]):
+        if b.get("kind") not in _PASSAGE_KINDS:
+            continue
+        text = transcribe.plain_for_llm(b["md"])
+        if len(text) >= _PASSAGE_MIN:
+            out.append((i, int(b["page"]), text))
+    return data["signature"], out
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def passage_index_stale(root: Path, work_id: str) -> bool:
+    """段落の索引を作り直す必要があるか(無い・本文か埋め込みモデルが変わった)。文字起こしが無ければ False。"""
+    try:
+        if not transcribe.done_pages(root, work_id):
+            return False
+        signature = content.load(root, work_id)["signature"]
+    except Exception:  # noqa: BLE001 - 本フォルダでない・読めない本は作らない
+        return False
+    with connect(root) as conn:
+        row = conn.execute(
+            "SELECT signature, model FROM passage_vec_meta WHERE work_id = ?", (work_id,)
+        ).fetchone()
+    return row is None or row["signature"] != signature or row["model"] != MODEL_NAME
+
+
+def build_passage_index(
+    root: Path,
+    work_id: str,
+    cancel_check: Callable[[], bool] | None = None,
+) -> int:
+    """段落の索引を作り直し、段落の数を返す。本文が同じ段落は前のベクトルを使い回す。"""
+    signature, passages = _passage_texts(root, work_id)
+    with connect(root) as conn:
+        meta = conn.execute("SELECT model FROM passage_vec_meta WHERE work_id = ?", (work_id,)).fetchone()
+        reuse = {}
+        if meta is not None and meta["model"] == MODEL_NAME:
+            reuse = {
+                r["hash"]: r["embedding"]
+                for r in conn.execute("SELECT hash, embedding FROM passage_vec WHERE work_id = ?", (work_id,))
+            }
+    hashes = [_text_hash(t) for _, _, t in passages]
+    todo = [n for n, h in enumerate(hashes) if h not in reuse]
+    vectors: dict[int, bytes] = {}
+    set_progress(work_id, 0, len(todo), "vectors")
+    try:
+        for i in range(0, len(todo), _BATCH):
+            if cancel_check and cancel_check():
+                raise Cancelled()
+            batch = todo[i : i + _BATCH]
+            for n, v in zip(batch, embed([passages[n][2] for n in batch])):
+                vectors[n] = array("f", v).tobytes()
+            set_progress(work_id, min(i + _BATCH, len(todo)), len(todo), "vectors")
+    finally:
+        clear_progress(work_id)
+    with connect(root) as conn:
+        conn.execute("DELETE FROM passage_vec WHERE work_id = ?", (work_id,))
+        conn.executemany(
+            "INSERT INTO passage_vec (work_id, block, page, hash, embedding) VALUES (?, ?, ?, ?, ?)",
+            [
+                (work_id, block, page, hashes[n], vectors.get(n) or reuse[hashes[n]])
+                for n, (block, page, _) in enumerate(passages)
+            ],
+        )
+        conn.execute(
+            "INSERT INTO passage_vec_meta (work_id, signature, model, count, updated_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(work_id) DO UPDATE SET signature = excluded.signature, model = excluded.model, "
+            "count = excluded.count, updated_at = excluded.updated_at",
+            (work_id, signature, MODEL_NAME, len(passages), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    return len(passages)
+
+
+# 意味の近さで拾う段落の足切り: いちばん近い段落の類似度からこの幅まで。Ruri の類似度は狭い幅
+# (関係のある段落で 0.85〜0.93 前後)に詰まるので、絶対値ではなく上位からの差で切る。
+_PASSAGE_MARGIN = 0.05
+
+# 検索のたびに DB から全冊のベクトルを読まないよう、ルートごとに行列を持っておく
+# (索引の更新を passage_vec_meta の更新時刻と件数で見て、変わっていたら読み直す)。
+_matrix_cache: dict[str, tuple] = {}
+_matrix_lock = threading.Lock()
+
+
+def _passage_matrix(root: Path):
+    """(work_id の並び, ブロックの並び, ページの並び, 行列) と、索引のある本の数。"""
+    import numpy as np
+
+    with connect(root) as conn:
+        token = tuple(
+            conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(updated_at), ''), COALESCE(SUM(count), 0) FROM passage_vec_meta "
+                "WHERE model = ?",
+                (MODEL_NAME,),
+            ).fetchone()
+        )
+        key = str(root)
+        with _matrix_lock:
+            cached = _matrix_cache.get(key)
+            if cached and cached[0] == token:
+                return cached[1], token[0]
+        rows = conn.execute(
+            "SELECT v.work_id, v.block, v.page, v.embedding FROM passage_vec v "
+            "JOIN passage_vec_meta m ON m.work_id = v.work_id WHERE m.model = ?",
+            (MODEL_NAME,),
+        ).fetchall()
+    if rows:
+        data = (
+            np.array([r["work_id"] for r in rows]),
+            np.array([r["block"] for r in rows], dtype=np.int64),
+            np.array([r["page"] for r in rows], dtype=np.int64),
+            np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]),
+        )
+    else:
+        data = None
+    with _matrix_lock:
+        _matrix_cache[key] = (token, data)
+    return data, token[0]
+
+
+def search_passages(root: Path, query: str, work_id: str | None = None, k: int = 30) -> tuple[list[dict], int]:
+    """質問に意味の近い段落を最大 k 件返す: ([{work_id, block, page, score}], 索引のある本の数)。
+
+    いちばん近い段落より _PASSAGE_MARGIN 以上遠い段落は返さない(関係の薄い本の段落を減らす)。
+    """
+    import numpy as np
+
+    data, indexed = _passage_matrix(root)
+    if data is None or not query.strip():
+        return [], indexed
+    wids, blocks, pages, mat = data
+    q = np.asarray(embed([query.strip()], query=True)[0], dtype=np.float32)
+    if mat.shape[1] != q.shape[0]:
+        return [], indexed
+    scores = mat @ q  # 正規化済みなので内積 = コサイン類似度
+    if work_id:
+        scores = np.where(wids == work_id, scores, -np.inf)
+    order = np.argsort(-scores)[:k]
+    floor = scores[order[0]] - _PASSAGE_MARGIN if len(order) else 0
+    return [
+        {"work_id": str(wids[i]), "block": int(blocks[i]), "page": int(pages[i]), "score": float(scores[i])}
+        for i in order
+        if np.isfinite(scores[i]) and scores[i] >= floor
+    ], indexed

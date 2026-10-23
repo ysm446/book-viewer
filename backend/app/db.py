@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS search_meta (
     signature TEXT NOT NULL
 );
 
+-- 段落の意味で探す索引(検索結果の画面)。アプリ用の本文のブロックごとの埋め込みベクトル。
+-- hash は段落の本文の指紋(本文が同じ段落は作り直すときにベクトルを使い回す)。
+CREATE TABLE IF NOT EXISTS passage_vec (
+    work_id   TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    block     INTEGER NOT NULL,
+    page      INTEGER NOT NULL,
+    hash      TEXT NOT NULL,
+    embedding BLOB NOT NULL,      -- float32 の並び(正規化済み)
+    PRIMARY KEY (work_id, block)
+);
+
+CREATE TABLE IF NOT EXISTS passage_vec_meta (
+    work_id     TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+    signature   TEXT NOT NULL,    -- 索引を作ったときのアプリ用の本文の指紋(content.json の signature)
+    model       TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chunk_index (
     work_id     TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
     signature   TEXT NOT NULL,    -- 索引を作ったときの本文の指紋(変わったら作り直す)
@@ -106,11 +125,24 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _init_search(conn: sqlite3.Connection) -> None:
-    """全文検索用の FTS5 索引(trigram)。未対応環境では作らない(LIKE で代替)。"""
+    """全文検索用の FTS5 索引(trigram)。未対応環境では作らない(LIKE で代替)。
+
+    search_index は本の単位(一覧の絞り込み)、passage_index は段落の単位(検索結果の画面)、
+    passage_ja は英語の本の訳文の段落の単位(日本語の語で英語の本を探す。pairs は訳の組の JSON)。
+    """
     try:
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS search_index "
             "USING fts5(work_id UNINDEXED, content, tokenize='trigram')"
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS passage_index "
+            "USING fts5(work_id UNINDEXED, block UNINDEXED, page UNINDEXED, text, tokenize='trigram')"
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS passage_ja "
+            "USING fts5(work_id UNINDEXED, block UNINDEXED, page UNINDEXED, text, pairs UNINDEXED, "
+            "tokenize='trigram')"
         )
     except sqlite3.OperationalError:
         pass

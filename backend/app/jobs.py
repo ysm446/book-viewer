@@ -1,7 +1,7 @@
 """重い処理のジョブキュー(単一ワーカーで順次処理)。
 
 文字起こし(transcribe)・章立てと要約(structure)・本文検索の索引(index)・英語の本の日本語訳
-(translate)を 1 件ずつ直列に行う。
+(translate)・検索結果の画面の段落の索引(vectors)を 1 件ずつ直列に行う。
 GPU(YomiToku・llama-server)を取り合わないように、すべてこのキュー経由にする。
 """
 
@@ -14,7 +14,7 @@ from pathlib import Path
 from . import embedding, llm_server, progress, search, structure, transcribe, translate
 from .db import connect
 
-KINDS = ("transcribe", "structure", "index", "translate")
+KINDS = ("transcribe", "structure", "index", "translate", "vectors")
 
 _lock = threading.Lock()
 _cond = threading.Condition(_lock)
@@ -71,6 +71,7 @@ def enqueue(
     - index: 本文検索の索引
     - translate: 英語の本の日本語訳(extra["style"] の訳の種類で。force で全部訳し直し、extra["blocks"] で
       そのブロックだけ、extra["stale"] で指示を書き直す前に訳したブロックだけ訳し直し)
+    - vectors: 検索結果の画面で意味の近さで探すための段落の索引(文字起こしの後とスキャン時に自動で積む)
     """
     if kind not in KINDS:
         raise ValueError(f"未対応のジョブです: {kind}")
@@ -171,6 +172,15 @@ def _run(job: dict) -> None:
         )
     elif job["kind"] == "index":
         embedding.build_index(root, work_id, cancel_check=cancel_check)
+    elif job["kind"] == "vectors":
+        # 自動で積むジョブなので、もともと読み込んでいなかった埋め込みモデルは終わったら手放す
+        # (LLM と GPU のメモリを取り合わないように)。
+        was_loaded = embedding.loaded()
+        try:
+            embedding.build_passage_index(root, work_id, cancel_check=cancel_check)
+        finally:
+            if not was_loaded:
+                embedding.stop()
     elif job["kind"] == "translate":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")
@@ -209,13 +219,19 @@ def _worker() -> None:
         except Exception as e:  # noqa: BLE001 - ワーカーは落とさない
             status, error = "error", str(e)
 
-        # 本文や要約が変わったので、書名検索の索引を更新する(途中で止めた分も含む)。
-        if job["kind"] in ("transcribe", "structure"):
+        # 本文・要約・訳文が変わったので、検索の索引を更新する(途中で止めた分も含む)。
+        if job["kind"] in ("transcribe", "structure", "translate"):
             try:
                 with connect(Path(job["root"])) as conn:
                     search.update_index(conn, Path(job["root"]), job["work_id"])
                     conn.commit()
             except Exception:  # noqa: BLE001 - 索引の更新失敗でワーカーは落とさない
+                pass
+        # 本文が増えた・変わったので、段落の意味の索引も作り直す(使い回せる段落は埋め込み直さない)。
+        if job["kind"] == "transcribe" and status != "canceled":
+            try:
+                enqueue(job["root"], job["work_id"], "vectors")
+            except Exception:  # noqa: BLE001 - 積めなくてもワーカーは落とさない
                 pass
 
         with _lock:
@@ -230,3 +246,15 @@ def _worker() -> None:
             )
             _cancel_ids.discard(job["work_id"])
             _current = None
+
+
+def enqueue_stale_vectors(root: str) -> None:
+    """段落の意味の索引が無い・古い本のジョブを積む(スキャンの後に別のスレッドで呼ぶ)。"""
+    try:
+        with connect(Path(root)) as conn:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM works ORDER BY last_opened_at DESC")]
+        for work_id in ids:
+            if embedding.passage_index_stale(Path(root), work_id):
+                enqueue(root, work_id, "vectors")
+    except Exception:  # noqa: BLE001 - 索引は次のスキャンでまた確かめる
+        pass

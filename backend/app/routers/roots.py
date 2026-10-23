@@ -1,7 +1,9 @@
+import threading
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .. import scanner, search
+from .. import jobs, scanner, search
 from ..db import connect
 from ..resolve import get_root
 
@@ -16,7 +18,10 @@ class ScanRequest(BaseModel):
 def scan_root(req: ScanRequest) -> dict:
     """管理ルート直下の本フォルダを走査して索引を更新する。"""
     root = get_root(req.root)
-    return scanner.scan(root)
+    result = scanner.scan(root)
+    # 段落の意味の索引が無い・古い本はキューで作る(本文を読み直すので、スキャンの応答は待たせない)
+    threading.Thread(target=jobs.enqueue_stale_vectors, args=(str(root),), daemon=True).start()
+    return result
 
 
 @router.get("/works")
@@ -71,3 +76,10 @@ def search_works(root: str, q: str) -> dict:
     """書名・著者・要約・本文を横断検索し、該当 work_id を返す。"""
     r = get_root(root)
     return {"work_ids": search.search(r, q)}
+
+
+@router.get("/search/passages")
+def search_passages(root: str, q: str, work_id: str | None = None) -> dict:
+    """本文を段落の単位で探し、本ごとにまとめて返す(検索結果の画面)。work_id でその本の全件。"""
+    r = get_root(root)
+    return search.search_passages(r, q, work_id)

@@ -625,3 +625,47 @@ def get_translation(root: Path, work_id: str, style_id: str = DEFAULT_STYLE) -> 
         "styles": styles,
         "blocks": out,
     }
+
+
+# ---- 本文検索の索引に入れる訳 ------------------------------------------------------
+
+_EMPHASIS_RE = re.compile(r"\*{1,3}([^*]+)\*{1,3}")
+
+
+def _style_order(book_dir: Path) -> list[str]:
+    """訳を探す種類の順: 自然な訳、その次は新しく書いた種類から。"""
+    paths = [p for p in (book_dir / TRANSLATION_DIRNAME).glob("*.json") if p.name != GLOSSARY_FILE]
+    paths.sort(key=lambda p: (p.stem != DEFAULT_STYLE, -p.stat().st_mtime))
+    return [p.stem for p in paths]
+
+
+def block_pairs(root: Path, work_id: str, blocks: list[dict]) -> dict[int, list[tuple[str, str]]]:
+    """訳してあるブロックの訳の組 {ブロックの添字: [(原文, 訳文), …]}(本文検索の索引・検索結果に使う)。
+
+    blocks は content.json のブロックの並び。訳の種類は自然な訳を優先し、無ければほかの種類の訳を使う
+    (検索は読む画面で選んだ種類を知らないため)。強調の *…* は外す。
+    """
+    try:
+        book_dir, _ = _book_dir(root, work_id)
+        if not (book_dir / TRANSLATION_DIRNAME).is_dir():
+            return {}
+        styles = [_load(book_dir, s)["blocks"] for s in _style_order(book_dir)]
+    except Exception:  # noqa: BLE001 - 本フォルダでない・読めないときは訳を使わない
+        return {}
+    out: dict[int, list[tuple[str, str]]] = {}
+    for i, b in enumerate(blocks):
+        if not _translatable(b):
+            continue
+        key = block_key(b["md"])
+        entry = next((st[key] for st in styles if key in st), None)
+        if not entry or not entry.get("pairs"):
+            continue
+        src = entry.get("src") or []
+        out[i] = [
+            (
+                _EMPHASIS_RE.sub(r"\1", " ".join(src[p["s"][0] : p["s"][1] + 1])),
+                _EMPHASIS_RE.sub(r"\1", p["ja"]).strip(),
+            )
+            for p in entry["pairs"]
+        ]
+    return out
