@@ -379,6 +379,23 @@ export async function enqueueTranslate(root: string, workId: string, redo = fals
   })
 }
 
+/** 英和辞書(EJDict)の項目。meanings は意味の一覧(『』は主な意味)、more は表示しきれなかった数。 */
+export interface DictionaryEntry {
+  word: string
+  meanings: string[]
+  more: number
+}
+
+export interface DictionaryResult {
+  query: string
+  /** 書かれた形の項目と、語尾を外した元の形の項目(見つからなければ空) */
+  entries: DictionaryEntry[]
+}
+
+export async function lookupWord(word: string): Promise<DictionaryResult> {
+  return jsonFetch(`/dictionary?word=${encodeURIComponent(word)}`)
+}
+
 /** 読み取りの確信度が低い本文の行(要確認の候補)。 */
 export interface LowLine {
   text: string

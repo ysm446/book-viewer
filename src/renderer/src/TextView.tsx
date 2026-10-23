@@ -18,11 +18,13 @@ import {
   getQueue,
   getPageText,
   getTranslation,
+  lookupWord,
   pageUrl,
   savePageText,
   type BookContent,
   type BookTranslation,
   type ContentBlock,
+  type DictionaryResult,
   type LowLine,
   type PageText,
   type TranscribeEngine,
@@ -59,6 +61,8 @@ interface Props {
   pairUnit: PairUnit
   /** LLM が読み込まれているか(翻訳に必要) */
   llmReady: boolean
+  /** 英語の本で、単語にマウスを乗せると英和辞書を引く */
+  dictionary: boolean
 }
 
 export type TranslationMode = 'off' | 'ja' | 'both'
@@ -198,6 +202,56 @@ function saveAnchor(workId: string, key: AnchorKey, reached: number): void {
   }
 }
 
+/** マウスを乗せてから辞書を引くまでの時間(ms)。読んでいるだけで次々に開かないように少し待つ。 */
+const DICT_DELAY = 450
+const DICT_WIDTH = 280
+
+/** 辞書のポップアップ。x / y は本文の面(.rf-stage)の中の位置。 */
+interface DictPopup {
+  word: string
+  /** 単語の位置(画面座標)。ポインタがここから出たら閉じる */
+  rect: DOMRect
+  x: number
+  y: number
+  /** 単語の上に出す(下に余裕が無いとき) */
+  above: boolean
+  result: DictionaryResult | null
+  error: string | null
+}
+
+/** 英単語の字(語の途中のアポストロフィを含む。ハイフンでは分ける)。 */
+const WORD_CHAR_RE = /[A-Za-z'’]/
+
+/** 画面座標の下にある英単語と、その範囲。英語の本文(訳文 .rf-ja を除く)の上でなければ null。 */
+function wordAt(flow: HTMLElement, x: number, y: number): { word: string; rect: DOMRect } | null {
+  const range = document.caretRangeFromPoint?.(x, y)
+  const node = range?.startContainer
+  if (!range || !node || node.nodeType !== Node.TEXT_NODE) return null
+  const el = node.parentElement
+  if (!el || !flow.contains(el) || el.closest('.rf-ja')) return null
+  const text = node.textContent ?? ''
+  let s = range.startOffset
+  let e = s
+  while (s > 0 && WORD_CHAR_RE.test(text[s - 1])) s--
+  while (e < text.length && WORD_CHAR_RE.test(text[e])) e++
+  while (s < e && /['’]/.test(text[s])) s++
+  while (e > s && /['’]/.test(text[e - 1])) e--
+  if (e - s < 2) return null
+  const r = document.createRange()
+  r.setStart(node, s)
+  r.setEnd(node, e)
+  const rect = r.getBoundingClientRect()
+  // caretRangeFromPoint は余白の上でも近くの字を返すので、本当に単語の上かを確かめる
+  if (x < rect.left - 1 || x > rect.right + 1 || y < rect.top - 1 || y > rect.bottom + 1) return null
+  return { word: text.slice(s, e), rect }
+}
+
+/** 辞書の意味の『』(主な意味)を太字にする。 */
+function DictMeaning({ text }: { text: string }): JSX.Element {
+  const parts = text.split(/『|』/)
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))}</>
+}
+
 /** 対訳を節の単位でまとめるときの区切り(見出しと場面転換の ***)。 */
 function isSectionBoundary(b: ContentBlock): boolean {
   return b.kind === 'heading' || /^\*{3,}\s*$/.test(b.md.trim())
@@ -250,7 +304,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     engine,
     translation,
     pairUnit,
-    llmReady
+    llmReady,
+    dictionary
   },
   ref
 ): JSX.Element {
@@ -726,6 +781,84 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     settle(target)
   }, [sections, sec, geo, vertical, fontSize, font, tick, showStage, settle, blocks, work.id, body])
 
+  // ---- 辞書(英語の本。単語にマウスを乗せて引く) ----
+
+  const [dict, setDict] = useState<DictPopup | null>(null)
+  const dictRef = useRef<DictPopup | null>(null)
+  dictRef.current = dict
+  const dictCache = useRef(new Map<string, DictionaryResult>())
+  const dictTimer = useRef(0)
+  const overPopup = useRef(false)
+  const dictEnabled = dictionary && isEnglish && translation !== 'ja'
+
+  const closeDict = useCallback((): void => {
+    window.clearTimeout(dictTimer.current)
+    setDict(null)
+  }, [])
+
+  function onFlowMouseMove(e: React.MouseEvent): void {
+    if (!dictEnabled) return
+    const { clientX: x, clientY: y } = e
+    const open = dictRef.current
+    if (open) {
+      const r = open.rect
+      if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1) return
+      setDict(null)
+    }
+    window.clearTimeout(dictTimer.current)
+    dictTimer.current = window.setTimeout(() => {
+      const flow = flowRef.current
+      const stage = stageRef.current
+      if (!flow || !stage) return
+      const hit = wordAt(flow, x, y)
+      if (!hit) return
+      const box = stage.getBoundingClientRect()
+      const above = hit.rect.bottom + 220 > box.bottom
+      const key = hit.word.toLowerCase()
+      const popup: DictPopup = {
+        word: hit.word,
+        rect: hit.rect,
+        x: Math.min(Math.max(hit.rect.left - box.left, 8), box.width - DICT_WIDTH - 8),
+        y: above ? box.bottom - hit.rect.top + 4 : hit.rect.bottom - box.top + 4,
+        above,
+        result: dictCache.current.get(key) ?? null,
+        error: null
+      }
+      setDict(popup)
+      if (popup.result) return
+      lookupWord(hit.word)
+        .then((res) => {
+          dictCache.current.set(key, res)
+          setDict((d) => (d && d.word === hit.word ? { ...d, result: res } : d))
+        })
+        .catch((err) =>
+          setDict((d) => (d && d.word === hit.word ? { ...d, error: (err as Error).message } : d))
+        )
+    }, DICT_DELAY)
+  }
+
+  function onFlowMouseLeave(): void {
+    window.clearTimeout(dictTimer.current)
+    // ポップアップへ移ったときは閉じない(意味を読んだり選んだりできるように)
+    window.setTimeout(() => {
+      if (!overPopup.current) setDict(null)
+    }, 120)
+  }
+
+  // ページを送ったら・辞書を切ったら閉じる。Escape でも閉じる。
+  useEffect(() => {
+    closeDict()
+  }, [screen, sec, dictEnabled, closeDict])
+  useEffect(() => {
+    if (!dict) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') closeDict()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [dict, closeDict])
+  useEffect(() => () => window.clearTimeout(dictTimer.current), [])
+
   const turn = useCallback(
     (dir: 'next' | 'prev'): void => {
       const l = layout.current
@@ -978,7 +1111,12 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   aria-label={vertical ? '次へ' : '前へ'}
                   onClick={() => turn(vertical ? 'next' : 'prev')}
                 />
-                <div className="rf-viewport" style={{ width: geo.width, height: geo.height }}>
+                <div
+                  className="rf-viewport"
+                  style={{ width: geo.width, height: geo.height }}
+                  onMouseMove={onFlowMouseMove}
+                  onMouseLeave={onFlowMouseLeave}
+                >
                   <div
                     ref={flowRef}
                     className={`rf-flow book-md ${vertical ? 'is-vertical' : ''}`}
@@ -1006,6 +1144,46 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   aria-label={vertical ? '前へ' : '次へ'}
                   onClick={() => turn(vertical ? 'prev' : 'next')}
                 />
+                {dict && (
+                  <div
+                    className="ex-popup dict-popup"
+                    role="tooltip"
+                    style={
+                      dict.above
+                        ? { left: dict.x, top: 'auto', bottom: dict.y, width: DICT_WIDTH }
+                        : { left: dict.x, top: dict.y, width: DICT_WIDTH }
+                    }
+                    onMouseEnter={() => {
+                      overPopup.current = true
+                    }}
+                    onMouseLeave={() => {
+                      overPopup.current = false
+                      setDict(null)
+                    }}
+                  >
+                    {dict.error ? (
+                      <div className="dict-note">辞書を引けませんでした: {dict.error}</div>
+                    ) : !dict.result ? (
+                      <div className="dict-note">{dict.word} を引いています…</div>
+                    ) : dict.result.entries.length === 0 ? (
+                      <div className="dict-note">「{dict.word}」は辞書にありません</div>
+                    ) : (
+                      dict.result.entries.map((en, i) => (
+                        <div key={i} className="dict-entry">
+                          <div className="dict-word">{en.word}</div>
+                          <ul className="dict-meanings">
+                            {en.meanings.map((m, k) => (
+                              <li key={k}>
+                                <DictMeaning text={m} />
+                              </li>
+                            ))}
+                          </ul>
+                          {en.more > 0 && <div className="dict-note">ほか {en.more} 件</div>}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
                 <div className="rf-foot">
                   {screen + 1} / {screens}
                   {sections.length > 1 && `（${sec + 1} / ${sections.length}）`}・全体の {bookPct}%

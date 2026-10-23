@@ -315,6 +315,8 @@ export function Reader({
   const [pairUnit, setPairUnit] = useState<PairUnit>(() =>
     PAIR_UNITS.some((u) => u.value === bookPrefs.pairUnit) ? bookPrefs.pairUnit! : 'sentence'
   )
+  // 英語の本の辞書(単語にマウスを乗せて引く)。全部の本で共通。
+  const [dictionary, setDictionary] = useStoredFlag('readerDictionary', true)
   // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
   const prefsTouched = useRef(false)
   function changeTextPrefs(patch: Partial<TextPrefs>): void {
@@ -840,6 +842,23 @@ export function Reader({
                   </div>
                 </div>
               )}
+              {language === 'en' && (
+                <div className="display-item">
+                  <span className="display-label">辞書</span>
+                  <div className="seg" role="group" aria-label="辞書">
+                    {([true, false] as const).map((on) => (
+                      <button
+                        key={String(on)}
+                        className={`seg-btn ${dictionary === on ? 'seg-active' : ''}`}
+                        onClick={() => setDictionary(on)}
+                        title="英語の本文の単語にマウスを乗せると、英和辞書（EJDict）の意味を出します"
+                      >
+                        {on ? 'オン' : 'オフ'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {language === 'en' && translation === 'both' && (
                 <div className="display-item">
                   <span className="display-label">対訳の単位</span>
@@ -942,6 +961,7 @@ export function Reader({
             translation={language === 'en' ? translation : 'off'}
             pairUnit={pairUnit}
             llmReady={llmReady}
+            dictionary={dictionary}
           />
         ) : (
         <>

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__, embedding, llm_server
-from .routers import chat, health, library, llm, pages, queue, roots, structure, text, translate, works
+from .routers import chat, dictionary, health, library, llm, pages, queue, roots, structure, text, translate, works
 
 
 @asynccontextmanager
@@ -55,6 +55,7 @@ app.include_router(pages.router, prefix="/api")
 app.include_router(text.router, prefix="/api")
 app.include_router(structure.router, prefix="/api")
 app.include_router(translate.router, prefix="/api")
+app.include_router(dictionary.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(llm.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")

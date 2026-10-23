@@ -1429,6 +1429,41 @@ input[type='checkbox']:focus-visible {
   border-inline-start: 2px solid var(--border);
   margin-bottom: 1em;
 }
+/* 英語の本の辞書(単語にマウスを乗せると出る)。位置と幅は TextView が単語の位置から決める。 */
+.dict-popup {
+  right: auto;
+  max-height: 50%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-sub);
+  white-space: normal;
+  writing-mode: horizontal-tb;
+  user-select: text;
+}
+.dict-entry + .dict-entry {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.dict-word {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dict-meanings {
+  margin: 4px 0 0;
+  padding-inline-start: 16px;
+}
+.dict-meanings strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.dict-note {
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .rf-foot {
   position: absolute;
   left: 0;
