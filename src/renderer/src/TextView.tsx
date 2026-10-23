@@ -211,6 +211,8 @@ interface DictPopup {
   word: string
   /** 単語の位置(画面座標)。ポインタがここから出たら閉じる */
   rect: DOMRect
+  /** 単語の範囲(開いている間ハイライトする) */
+  range: Range
   x: number
   y: number
   /** 単語の上に出す(下に余裕が無いとき) */
@@ -223,7 +225,11 @@ interface DictPopup {
 const WORD_CHAR_RE = /[A-Za-z'’]/
 
 /** 画面座標の下にある英単語と、その範囲。英語の本文(訳文 .rf-ja を除く)の上でなければ null。 */
-function wordAt(flow: HTMLElement, x: number, y: number): { word: string; rect: DOMRect } | null {
+function wordAt(
+  flow: HTMLElement,
+  x: number,
+  y: number
+): { word: string; rect: DOMRect; range: Range } | null {
   const range = document.caretRangeFromPoint?.(x, y)
   const node = range?.startContainer
   if (!range || !node || node.nodeType !== Node.TEXT_NODE) return null
@@ -243,8 +249,11 @@ function wordAt(flow: HTMLElement, x: number, y: number): { word: string; rect: 
   const rect = r.getBoundingClientRect()
   // caretRangeFromPoint は余白の上でも近くの字を返すので、本当に単語の上かを確かめる
   if (x < rect.left - 1 || x > rect.right + 1 || y < rect.top - 1 || y > rect.bottom + 1) return null
-  return { word: text.slice(s, e), rect }
+  return { word: text.slice(s, e), rect, range: r }
 }
+
+/** 辞書を引いている単語のハイライト(CSS Custom Highlight API。DOM を変えないので組みは変わらない)。 */
+const DICT_HIGHLIGHT = 'dict-word'
 
 /** 辞書の意味の『』(主な意味)を太字にする。 */
 function DictMeaning({ text }: { text: string }): JSX.Element {
@@ -818,6 +827,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       const popup: DictPopup = {
         word: hit.word,
         rect: hit.rect,
+        range: hit.range,
         x: Math.min(Math.max(hit.rect.left - box.left, 8), box.width - DICT_WIDTH - 8),
         y: above ? box.bottom - hit.rect.top + 4 : hit.rect.bottom - box.top + 4,
         above,
@@ -844,6 +854,16 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       if (!overPopup.current) setDict(null)
     }, 120)
   }
+
+  // 開いている間、引いている単語をハイライトする。
+  const dictRange = dict?.range
+  useEffect(() => {
+    if (!dictRange || typeof Highlight === 'undefined') return
+    CSS.highlights.set(DICT_HIGHLIGHT, new Highlight(dictRange))
+    return () => {
+      CSS.highlights.delete(DICT_HIGHLIGHT)
+    }
+  }, [dictRange])
 
   // ページを送ったら・辞書を切ったら閉じる。Escape でも閉じる。
   useEffect(() => {

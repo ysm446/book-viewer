@@ -1452,6 +1452,10 @@ input[type='checkbox']:focus-visible {
   margin-bottom: 1em;
 }
 /* 英語の本の辞書(単語にマウスを乗せると出る)。位置と幅は TextView が単語の位置から決める。 */
+/* 辞書を引いている単語(CSS Custom Highlight API)。選択と同じ 2 段目の面の色。 */
+::highlight(dict-word) {
+  background-color: var(--panel-3);
+}
 .dict-popup {
   right: auto;
   max-height: 50%;
