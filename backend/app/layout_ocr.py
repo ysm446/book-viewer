@@ -38,6 +38,11 @@ _CAPTION_RE_EN = re.compile(r"^\s*(Figure|Fig\.|Table|Plate|Photo|Chart|Map)\s*[
 # 英語の本の場面転換の飾り(* * * や ⁂。YomiToku は「米」と読むことがある)。
 _SCENE_BREAK_RE = re.compile(r"^[\s*＊⁂※米✳❋·•]+$")
 _BULLET_RE = re.compile(r"^(?:[·・•]\s*|-\s+)")
+# 英語の本の箇条の行頭(1. / 2) / · など)。
+_LIST_ITEM_RE = re.compile(r"^(?:\d{1,2}[.)]\s|[·・•]\s?)")
+# 飾り頭文字の候補(引用符が付くことがある)。数字は字形の似た大文字の読み違い。
+_DROP_CAP_RE = re.compile(r"^([\"“‘']?)([A-Z0-9])$")
+_DROP_CAP_DIGITS = {"0": "O", "5": "S", "8": "B"}
 # 英語の本の飾り頭文字(章の最初の 1 字を大きくしたもの)。本文の字のこの倍より高い 1 字の段落。
 _DROP_CAP_RATIO = 1.8
 # ルビの候補(かなだけ)と、ルビの親文字にする字(漢字)。
@@ -137,6 +142,17 @@ def _is_ruby_only(p: dict, words: list[dict], page_char: float) -> bool:
         if x1 <= _center(w)[0] <= x2 and y1 <= _center(w)[1] <= y2
     ]
     return bool(sizes) and _median(sizes) < page_char * 0.7
+
+
+def _drop_cap_text(cap: str, following: str) -> str:
+    """飾り頭文字を本文の字に直す。数字に読まれた字は形の似た大文字にする。
+
+    1 は I か J。英語で I の直後に母音が来る語はまれなので、続きが母音なら J(JONAS)、そうでなければ I(IT)。
+    """
+    quote, letter = cap[:-1], cap[-1]
+    if letter == "1":
+        letter = "J" if following[:1].lower() in ("a", "e", "o", "u") else "I"
+    return quote + _DROP_CAP_DIGITS.get(letter, letter)
 
 
 def _is_heading_en(p: dict, words: list[dict], page_char: float, text: str) -> bool:
@@ -274,11 +290,20 @@ def _split_paragraphs(p: dict, words: list[dict], lang: str = "ja") -> tuple[lis
         rows.append((line[0]["start"], _line_text(line, marks, lang)))
     base = min(start for start, _ in rows)
     paras: list[str] = []
+    in_item = False  # 英語の本の番号付き・箇条書きの項目の中(2 行目以降はぶら下げで字下げされる)
     for i, (start, text) in enumerate(rows):
-        if i == 0 or start - base > char * 0.5:
+        indented = start - base > char * 0.5
+        if lang == "en" and _LIST_ITEM_RE.match(text):
             paras.append(text)
+            in_item = True
+        elif lang == "en" and in_item and indented:
+            paras[-1] = _join(paras[-1], text, lang)
+        elif i == 0 or indented:
+            paras.append(text)
+            in_item = False
         else:
             paras[-1] = _join(paras[-1], text, lang)
+            in_item = False
     # 行の取り出しが段落の中身と食い違う(字が欠ける)ときは分割をあきらめる。
     got = re.sub(r"\s", "", _RUBY_TAG_RE.sub("", "".join(paras)))
     want = re.sub(r"\s", "", whole)
@@ -372,10 +397,11 @@ def transcribe(image_bytes: bytes, lang: str = "ja") -> tuple[str, list[Figure],
     if lang == "en" and page_char > 0:
         caps = []
         for p in paragraphs:
-            text = _text(p, lang)
+            m = _DROP_CAP_RE.match(_text(p, lang))
             x1, y1, x2, y2 = p["box"]
-            if not (len(text) == 1 and text.isupper() and y2 - y1 > page_char * _DROP_CAP_RATIO):
+            if not (m and y2 - y1 > page_char * _DROP_CAP_RATIO):
                 continue
+            text = m.group(1) + m.group(2)
             for q in paragraphs:
                 # 頭文字の右へ続き、縦の範囲が重なる段落(頭文字の下の行の分、左端は頭文字と揃う)
                 qx1, qy1, qx2, qy2 = q["box"]
@@ -438,7 +464,7 @@ def transcribe(image_bytes: bytes, lang: str = "ja") -> tuple[str, list[Figure],
         else:
             texts, first_indented = _split_paragraphs(p, words, lang)
         if id(p) in drop_caps and texts:
-            texts[0] = drop_caps[id(p)] + texts[0]
+            texts[0] = _drop_cap_text(drop_caps[id(p)], texts[0]) + texts[0]
         if lang == "en":
             # 箇条書きの記号(· ・ •)は Markdown のリストにする。記号の前に読み違いの字が付くことがある
             texts = [_BULLET_RE.sub("- ", t) for t in texts]
