@@ -25,6 +25,7 @@ import {
   savePageText,
   startTts,
   ttsSpeak,
+  ttsVoiceOf,
   type BookContent,
   type BookTranslation,
   type ContentBlock,
@@ -1232,7 +1233,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       let p = s.cache.get(key)
       if (!p) {
         const v = ttsRef.current
-        p = ttsSpeak(v.baseUrl, speechParts(i)[part], { caption: v.caption, refWav: v.refWav, seed: v.seed })
+        p = ttsSpeak(v.baseUrl, speechParts(i)[part], ttsVoiceOf(v))
         p.catch(() => s.cache.delete(key)) // 失敗は覚えない(次は頼み直す)
         s.cache.set(key, p)
       }

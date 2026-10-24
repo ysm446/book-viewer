@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   downloadLlamaBuild,
+  fetchTtsRefAudio,
   getTtsStatus,
   installTts,
   listLatestLlamaReleases,
@@ -8,6 +9,7 @@ import {
   listLlmModels,
   startTts,
   stopTts,
+  ttsSpeak,
   type InstalledBuild,
   type ReleaseBuild,
   type TtsStatus
@@ -42,6 +44,42 @@ const DEFAULT_CHAT_SYSTEM_PROMPT =
 
 // main/settings.ts の DEFAULT_TTS_CAPTION と一致させること。
 const DEFAULT_TTS_CAPTION = '穏やかで落ち着いた女性の声。本を朗読するように、はっきりと読む'
+
+/** 声の説明の試聴に読ませる文。 */
+const TTS_SAMPLE = 'こんにちは。この声で本を読み上げます。今日は空が高く、風の心地よい一日になりそうです。'
+
+function PlayIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7 4.5v15l12-7.5z" />
+    </svg>
+  )
+}
+
+function StopIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  )
+}
+
+function CloseIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  )
+}
 
 function ResetIcon(): JSX.Element {
   return (
@@ -171,6 +209,142 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
   }
 
   const ttsInstalling = tts?.install?.phase === 'step'
+
+  // ---- 声の試聴(参照音声の再生・声の説明で合成した見本) ----
+  type Preview = { key: string; phase: 'loading' | 'playing' }
+  const [preview, setPreview] = useState<Preview | null>(null)
+  const previewAudio = useRef<HTMLAudioElement | null>(null)
+  const previewGen = useRef(0)
+  const stopPreview = useCallback((): void => {
+    previewGen.current += 1
+    const a = previewAudio.current
+    previewAudio.current = null
+    if (a) {
+      a.pause()
+      URL.revokeObjectURL(a.src)
+    }
+    setPreview(null)
+  }, [])
+  useEffect(() => () => stopPreview(), [stopPreview])
+  useEffect(() => {
+    if (tab !== 'speech') stopPreview()
+  }, [tab, stopPreview])
+
+  /** 音声(Blob)を取ってきて鳴らす。取り方は呼び出し側が渡す。 */
+  async function playPreview(key: string, load: () => Promise<Blob>): Promise<void> {
+    stopPreview()
+    const gen = previewGen.current
+    setPreview({ key, phase: 'loading' })
+    setTtsError(null)
+    try {
+      const blob = await load()
+      if (gen !== previewGen.current) return
+      const a = new Audio(URL.createObjectURL(blob))
+      previewAudio.current = a
+      a.onended = () => {
+        if (previewAudio.current === a) stopPreview()
+      }
+      a.onerror = () => {
+        if (previewAudio.current === a) {
+          stopPreview()
+          setTtsError('音声を再生できません')
+        }
+      }
+      await a.play()
+      if (gen === previewGen.current) setPreview({ key, phase: 'playing' })
+    } catch (e) {
+      if (gen !== previewGen.current) return
+      stopPreview()
+      setTtsError((e as Error).message)
+    }
+  }
+
+  /** サーバーを合成できる状態にする(止まっていれば起動してモデルの読み込みを待つ)。 */
+  async function ensureTtsRunning(gen: number): Promise<void> {
+    let st = await getTtsStatus(ttsOpts)
+    if (!st.installed) {
+      throw new Error('読み上げサーバー（Irodori-TTS-Server）が入っていません。先にインストールしてください')
+    }
+    if (!st.running && !st.starting) st = await startTts(ttsOpts)
+    while (!st.running) {
+      if (st.error) throw new Error(st.error)
+      if (gen !== previewGen.current) throw new Error('中止しました')
+      await new Promise((r) => setTimeout(r, 1000))
+      st = await getTtsStatus(ttsOpts)
+    }
+    setTts(st)
+  }
+
+  /** 声の説明だけで作った声の見本を聞く(参照音声は使わない)。 */
+  function previewCaption(): void {
+    void playPreview('caption', async () => {
+      await ensureTtsRunning(previewGen.current)
+      return ttsSpeak(settings.tts.baseUrl, TTS_SAMPLE, {
+        caption: settings.tts.caption,
+        refWav: '',
+        seed: settings.tts.seed
+      })
+    })
+  }
+
+  function previewRef(path: string): void {
+    void playPreview(`ref:${path}`, () => fetchTtsRefAudio(path))
+  }
+
+  function previewButton(key: string, title: string, onPlay: () => void): JSX.Element {
+    const active = preview?.key === key
+    return (
+      <button
+        className={active ? 'icon-btn btn-active' : 'icon-btn'}
+        title={active ? '停止' : title}
+        aria-label={active ? '停止' : title}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (active) stopPreview()
+          else onPlay()
+        }}
+      >
+        {active && preview?.phase === 'loading' ? (
+          <span className="icon-spin">⟳</span>
+        ) : active ? (
+          <StopIcon />
+        ) : (
+          <PlayIcon />
+        )}
+      </button>
+    )
+  }
+
+  // ---- 参照音声のストック ----
+  const refWavs = settings.tts.refWavs
+  async function addRefWavs(): Promise<void> {
+    const paths = await window.api.selectAudioFiles()
+    if (paths.length === 0) return
+    const known = new Set(refWavs.map((r) => r.path))
+    const stamp = Date.now().toString(36)
+    const added = paths
+      .filter((p) => !known.has(p))
+      .map((p, i) => ({ id: `ref-${stamp}-${i}`, name: p.split(/[\\/]/).pop() || p, path: p }))
+    if (added.length === 0) return
+    const next = [...refWavs, ...added]
+    const hasSelected = next.some((r) => r.id === settings.tts.refWavId)
+    onChange({
+      tts: {
+        refWavs: next,
+        refWavId: hasSelected ? settings.tts.refWavId : added[0].id,
+        // 最初の 1 本を入れたときは、そのまま使う
+        ...(refWavs.length === 0 ? { refWavEnabled: true } : {})
+      }
+    })
+  }
+  function removeRefWav(id: string): void {
+    const next = refWavs.filter((r) => r.id !== id)
+    const selected = next.some((r) => r.id === settings.tts.refWavId) ? settings.tts.refWavId : (next[0]?.id ?? '')
+    onChange({ tts: { refWavs: next, refWavId: selected, ...(next.length === 0 ? { refWavEnabled: false } : {}) } })
+  }
+  function renameRefWav(id: string, name: string): void {
+    onChange({ tts: { refWavs: refWavs.map((r) => (r.id === id ? { ...r, name } : r)) } })
+  }
   const ttsStateLabel = !tts
     ? '確認中…'
     : ttsInstalling
@@ -869,6 +1043,11 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
             <div className="settings-row settings-row-col">
               <div className="syslabel-row">
                 <span className="settings-label-text">声の説明</span>
+                {previewButton(
+                  'caption',
+                  'この説明だけで作った声の見本を聞く（参照音声は使いません。サーバーが止まっていれば起動します）',
+                  previewCaption
+                )}
                 <button
                   className="icon-btn syslabel-reset"
                   title="既定に戻す"
@@ -878,8 +1057,8 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                 </button>
               </div>
               <span className="settings-desc">
-                声の性別・年齢・話し方を日本語で書くと、その声で読みます（参照音声が無いときの声づくり）。
-                変えると、同じ本文でも音声を作り直します
+                声の性別・年齢・話し方を日本語で書くと、その声で読みます（参照音声を使わないときの声づくり）。
+                変えると、同じ本文でも音声を作り直します。▶ で見本の文を合成して聞けます
               </span>
               <textarea
                 className="system-prompt"
@@ -891,36 +1070,86 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
 
             <div className="settings-row">
               <div className="settings-label">
-                参照音声
+                参照音声を使う
                 <span className="settings-desc">
-                  真似させたい声の wav（きれいな発話を合わせて 30 秒ほど。最大 120 秒）。空なら上の説明だけで声を作ります
+                  真似させたい声の wav（きれいな発話を合わせて 30 秒ほど。最大 120 秒）で声を作ります。
+                  OFF なら上の説明だけで声を作ります
                 </span>
               </div>
-              <div className="settings-llm-url">
+              <label className="switch">
                 <input
-                  className="tag-input settings-text"
-                  placeholder="(なし)"
-                  value={settings.tts.refWav}
-                  onChange={(e) => onChange({ tts: { refWav: e.target.value } })}
+                  type="checkbox"
+                  checked={settings.tts.refWavEnabled}
+                  disabled={refWavs.length === 0}
+                  onChange={(e) => onChange({ tts: { refWavEnabled: e.target.checked } })}
                 />
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    const f = await window.api.selectFile()
-                    if (f) onChange({ tts: { refWav: f } })
-                  }}
+                <span className="switch-track" />
+              </label>
+            </div>
+
+            <div className="settings-row settings-row-col">
+              <span className="settings-label-text">参照音声のストック</span>
+              <span className="settings-desc">
+                いくつか入れておき、使うものを選びます。▶ でその音声を聞けます。名前は書き換えられます
+              </span>
+              {refWavs.length > 0 && (
+                <div
+                  className={settings.tts.refWavEnabled ? 'tts-ref-list' : 'tts-ref-list is-off'}
+                  role="radiogroup"
+                  aria-label="参照音声"
                 >
-                  参照
+                  {refWavs.map((r) => {
+                    const selected = r.id === settings.tts.refWavId
+                    return (
+                      <div
+                        key={r.id}
+                        className={selected ? 'tts-ref-row is-selected' : 'tts-ref-row'}
+                        role="radio"
+                        aria-checked={selected}
+                        tabIndex={0}
+                        title={r.path}
+                        onClick={() => onChange({ tts: { refWavId: r.id } })}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault()
+                            onChange({ tts: { refWavId: r.id } })
+                          }
+                        }}
+                      >
+                        <span className="tts-ref-mark" aria-hidden="true" />
+                        <div className="tts-ref-text">
+                          <input
+                            className="tts-ref-name"
+                            value={r.name}
+                            aria-label="参照音声の名前"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            onChange={(e) => renameRefWav(r.id, e.target.value)}
+                          />
+                          <span className="tts-ref-path">{r.path}</span>
+                        </div>
+                        {previewButton(`ref:${r.path}`, 'この音声を聞く', () => previewRef(r.path))}
+                        <button
+                          className="icon-btn"
+                          title="ストックから外す"
+                          aria-label="ストックから外す"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (preview?.key === `ref:${r.path}`) stopPreview()
+                            removeRefWav(r.id)
+                          }}
+                        >
+                          <CloseIcon />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div>
+                <button className="btn" onClick={() => void addRefWavs()}>
+                  追加…
                 </button>
-                {settings.tts.refWav !== '' && (
-                  <button
-                    className="icon-btn"
-                    title="参照音声を外す"
-                    onClick={() => onChange({ tts: { refWav: '' } })}
-                  >
-                    <ResetIcon />
-                  </button>
-                )}
               </div>
             </div>
 

@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-10-24 18:30
+更新日時: 2026-10-25 10:30
 
 ## 現在地
 
@@ -89,6 +89,9 @@ M0・M1 完了、M2〜M6 の最初の版まで(マイルストーンは [plan.md
   設定の「読み上げ」タブ、テキスト表示のツールバーの「読み上げ」と段落の右クリックの「ここから読み上げる」。
   設計は [../design/tts.md](../design/tts.md)。story-graph の既存インストール(`D:\GitHub\story-graph\runtime\tts\irodori`)と
   取得済みの v4-Small で、起動 11〜34 秒・3 文の合成 1.7 秒・キャッシュ 5 ms を確認(API まで)。実アプリでの画面の確認はこれから。
+- 2026-10-25: 読み上げの参照音声をストック + ON / OFF + 選択にした(設定の `tts.refWavs` / `refWavEnabled` / `refWavId`。
+  旧 `refWav` は読み込み時に移す)。`GET /api/tts/ref-audio` で参照音声を試聴、「声の説明」の ▶ で見本の文を合成して試聴
+  (`Settings.tsx` の `playPreview` / `ensureTtsRunning`)。読み上げに使う声は `api.ts` の `ttsVoiceOf` で組む。
 
 ## 次にやること
 

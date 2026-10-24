@@ -1,7 +1,7 @@
 # UI スタイルガイド
 
 作成日時: 2026-08-11 18:52
-更新日時: 2026-10-24 18:30
+更新日時: 2026-10-25 10:30
 
 このアプリ（book-viewer。旧 manga-viewer）の UI を一貫させるための唯一の基準。色・タイポグラフィ・余白・
 部品・状態表現・モーションをここに集約する。**UI を変更するときは必ずこの文書に従う。**
@@ -497,6 +497,11 @@ focus で `--accent` の枠）。要確認・手直し済みの印（`.text-page
 英語の本で原文だけを出しているときは読み上げの部品を出さない（読める訳文が無い）。失敗は `.text-error` に理由を出す。
 設定の「読み上げ」タブは、ランタイムタブと同じ行の部品（`.settings-row` / `.settings-llm-url` / `.tag-input.settings-text` /
 `.system-prompt`）で組む。インストールの出力は `.tts-log`（`11px` 等幅 / `--text-dim` / 最大 `96px`）。
+参照音声のストック（`.tts-ref-list`）は 5.9 のリスト行: 行は `radius 6px`、hover で `--panel-2`、選んだ行は `--accent-soft` と
+左端の丸い印（`.tts-ref-mark`、`14px`。選択で `--accent` の点）。行の中は 名前（`.tts-ref-name`。枠の無い `26px` の入力で、
+hover で border、focus で `--input-bg` + `--accent`）と パス（`11px` / `--text-dim` / 1 行省略）、右に ▶（試聴）と ×（外す）の
+`.icon-btn`。試聴中のボタンは `.btn-active`（`--panel-3`）で ■ にし、取り込み中は `.icon-spin`。スイッチが OFF のときは
+一覧ごと `opacity .6`。「声の説明」の ▶ も同じ試聴ボタンで、ラベル行（`.syslabel-row`）に置く。
 
 ### 5.13.4.1.1 訳し直すのメニュー（`.text-redo-menu`）
 

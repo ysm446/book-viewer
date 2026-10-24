@@ -36,7 +36,9 @@ export interface AppSettings {
     modelsDir: string
     baseUrl: string
     caption: string
-    refWav: string
+    refWavs: { id: string; name: string; path: string }[]
+    refWavEnabled: boolean
+    refWavId: string
     seed: number | null
   }
 }
@@ -82,6 +84,8 @@ const api = {
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectFolder'),
   /** ファイル選択ダイアログを開く。キャンセル時は null。 */
   selectFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectFile'),
+  /** 音声ファイル(wav など)を複数選択する。キャンセル時は空配列。 */
+  selectAudioFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:selectAudioFiles'),
   /** 取り込むアーカイブ(zip / cbz / pdf)を複数選択する。キャンセル時は空配列。 */
   selectArchives: (): Promise<string[]> => ipcRenderer.invoke('dialog:selectArchives'),
   /** ドラッグ&ドロップされた File の実パスを返す(Electron 32 以降 File.path が無いため)。 */

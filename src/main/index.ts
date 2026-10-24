@@ -219,6 +219,17 @@ function registerIpc(): void {
     return result.filePaths[0]
   })
 
+  // 読み上げの参照音声の選択(複数可)。
+  ipcMain.handle('dialog:selectAudioFiles', async () => {
+    if (!mainWindow) return []
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      title: '参照音声を選択',
+      filters: [{ name: '音声(wav / flac / mp3 / ogg / m4a)', extensions: ['wav', 'flac', 'mp3', 'ogg', 'm4a'] }]
+    })
+    return result.canceled ? [] : result.filePaths
+  })
+
   // 本の取り込み用アーカイブ選択(複数可)。
   ipcMain.handle('dialog:selectArchives', async () => {
     if (!mainWindow) return []

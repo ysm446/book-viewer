@@ -58,11 +58,24 @@ export interface AppSettings {
     baseUrl: string
     /** 声の説明(キャプション)。参照音声が無いときの声づくりに使う */
     caption: string
-    /** 参照音声(wav)のパス。指定すると声を真似る */
-    refWav: string
+    /** 参照音声のストック(真似させたい声の wav)。使うものは refWavId で選ぶ */
+    refWavs: TtsRefWav[]
+    /** 参照音声を使うか(OFF なら声の説明だけで声を作る) */
+    refWavEnabled: boolean
+    /** 使う参照音声の id(refWavs のいずれか) */
+    refWavId: string
     /** 合成の seed(同じ声を保つ。空なら毎回変わる) */
     seed: number | null
   }
+}
+
+/** 読み上げの参照音声 1 件。 */
+export interface TtsRefWav {
+  id: string
+  /** 表示名(既定はファイル名) */
+  name: string
+  /** wav のパス(読み上げサーバーから見える場所) */
+  path: string
 }
 
 /** 読み上げの声の既定の説明(Irodori-TTS のキャプション。参照音声が無いときに使う)。 */
@@ -117,7 +130,9 @@ const DEFAULTS: AppSettings = {
     modelsDir: '',
     baseUrl: 'http://127.0.0.1:8088',
     caption: DEFAULT_TTS_CAPTION,
-    refWav: '',
+    refWavs: [],
+    refWavEnabled: false,
+    refWavId: '',
     seed: 1234
   }
 }
@@ -151,6 +166,23 @@ function nested<K extends 'llm' | 'tts'>(parsed: Partial<AppSettings>, key: K): 
   return out as AppSettings[K]
 }
 
+/** 旧設定(参照音声が 1 本のパス `refWav`)を、ストック + 選択の形に移す。 */
+function migrateRefWav(saved: Record<string, unknown> | undefined, tts: AppSettings['tts']): void {
+  const legacy = saved?.refWav
+  if (typeof legacy === 'string' && legacy.trim() !== '' && tts.refWavs.length === 0) {
+    const path = legacy.trim()
+    const id = `ref-${Date.now().toString(36)}`
+    tts.refWavs = [{ id, name: basename(path), path }]
+    tts.refWavId = id
+    tts.refWavEnabled = true
+  }
+  if (!tts.refWavs.some((r) => r.id === tts.refWavId)) tts.refWavId = tts.refWavs[0]?.id ?? ''
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
+
 /** 途中書き込みで壊れないよう、一時ファイルに書いてからリネームで置き換える。 */
 function writeSettingsFile(file: string, value: AppSettings): void {
   const tmp = `${file}.tmp`
@@ -166,6 +198,7 @@ export function getSettings(): AppSettings {
       // 今は使っていない項目(漫画向けの解析の設定など)は読み込み時に落とす(次の保存で消える)。
       const llm = nested(parsed, 'llm')
       const tts = nested(parsed, 'tts')
+      migrateRefWav(parsed.tts as Record<string, unknown> | undefined, tts)
       // 手を加えていない旧既定のままなら、今の既定に置き換える。
       if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
         llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT

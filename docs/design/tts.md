@@ -1,7 +1,7 @@
 # 音声読み上げ(Irodori-TTS)
 
 作成日時: 2026-10-24 18:30
-更新日時: 2026-10-24 18:30
+更新日時: 2026-10-25 10:30
 
 テキスト表示の本文を、ローカルの音声モデルで読み上げる仕組みの設計メモ。2026-10-24 のユーザー発案
 (「irodori tts の読み上げを入れられますか？ D:\ai-models」)。story-graph の TTS 連携(`docs/design/voice.md`)と
@@ -36,6 +36,7 @@
 | `POST /api/tts/stop` | 自分で起動したサーバーを止める(VRAM を空ける) |
 | `POST /api/tts/install` | `git clone` + `uv sync` を背後で実行する(進み具合は status の `install`) |
 | `POST /api/tts/speak` | 本文(4000 字まで)を音声にして返す。`caption` / `ref_wav` / `seed` は設定の値をそのまま渡す |
+| `GET /api/tts/ref-audio` | 設定の参照音声(ローカルの音声ファイル)を試聴のために返す(wav / flac / mp3 / ogg / m4a) |
 
 - 音声の形式は opus(Ogg。wav の 1/10 ほど)。サーバーが opus を出せなければ(ffmpeg も対応する soundfile も無い)
   wav に切り替えて以後 wav で頼む。
@@ -64,7 +65,14 @@
 
 サーバーの状態(未インストール / 停止中 / 起動中 / 稼働中)と インストール / 起動 / 停止 / 入れ直す、サーバーのフォルダ、
 モデルの置き場、サーバーの URL。声は 声の説明(キャプション。既定「穏やかで落ち着いた女性の声。本を朗読するように、
-はっきりと読む」)、参照音声(wav)、seed(既定 1234。同じ声を保つ)。`data/settings.json` の `tts`。
+はっきりと読む」)、参照音声、seed(既定 1234。同じ声を保つ)。`data/settings.json` の `tts`。
+
+- 参照音声はストック(`refWavs: {id, name, path}[]`)にいくつか入れておき、「参照音声を使う」(`refWavEnabled`)が ON のとき
+  選んだ 1 本(`refWavId`)だけを `ref_wav` として渡す(`api.ts` の `ttsVoiceOf`)。OFF ならキャプションだけ(`no_ref`)。
+  旧設定の `refWav`(パス 1 本)は読み込み時にストックへ移し ON にする(`settings.ts` の `migrateRefWav`)。
+- 試聴: ストックの各行の ▶ はその音声ファイルをそのまま鳴らす(`GET /api/tts/ref-audio` → blob)。「声の説明」の ▶ は
+  見本の文(`TTS_SAMPLE`)をキャプションだけで合成して鳴らす(参照音声は使わない。サーバーが止まっていれば起動して
+  モデルの読み込みを待つ)。鳴らすのは一度に 1 つ(`playPreview`)。読み上げの音声のキャッシュに見本も入る。
 
 ## 5. 実測(2026-10-24、RTX PRO 5000 48GB、story-graph の既存インストールと取得済みの v4-Small)
 

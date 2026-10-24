@@ -3367,3 +3367,80 @@ input[type='checkbox']:focus-visible {
   color: var(--text);
   background: var(--panel-3);
 }
+
+/* 設定: 読み上げの参照音声のストック(リスト行。選んだ行は --accent-soft、印は accent の丸) */
+.tts-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 560px;
+}
+.tts-ref-list.is-off {
+  opacity: 0.6;
+}
+.tts-ref-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tts-ref-row:hover {
+  background: var(--panel-2);
+}
+.tts-ref-row.is-selected {
+  background: var(--accent-soft);
+}
+.tts-ref-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.tts-ref-mark {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+}
+.tts-ref-row.is-selected .tts-ref-mark {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 4px, transparent 4.5px);
+}
+.tts-ref-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tts-ref-name {
+  height: 26px;
+  padding: 0 6px;
+  margin-left: -6px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tts-ref-name:hover {
+  border-color: var(--border);
+}
+.tts-ref-name:focus {
+  outline: none;
+  background: var(--input-bg);
+  border-color: var(--accent);
+}
+.tts-ref-path {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

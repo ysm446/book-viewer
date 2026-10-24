@@ -1,5 +1,7 @@
 /** バックエンド (FastAPI) への薄い HTTP クライアント。 */
 
+import type { AppSettings } from '../../preload'
+
 let baseUrl = ''
 let token = ''
 
@@ -968,24 +970,20 @@ export async function installTts(o: TtsServerOpts): Promise<TtsStatus> {
 /** 声の指定(設定の値)。 */
 export interface TtsVoice {
   caption: string
+  /** 参照音声のパス(空なら声の説明だけで声を作る) */
   refWav: string
   seed: number | null
 }
 
-/** 本文を音声にする(opus か wav の Blob)。 */
-export async function ttsSpeak(baseUrl: string, text: string, voice: TtsVoice): Promise<Blob> {
+/** 設定の tts から、今の読み上げに使う声を組む(参照音声は ON で選んだものだけ)。 */
+export function ttsVoiceOf(t: AppSettings['tts']): TtsVoice {
+  const ref = t.refWavEnabled ? t.refWavs.find((r) => r.id === t.refWavId) : undefined
+  return { caption: t.caption, refWav: ref?.path ?? '', seed: t.seed }
+}
+
+async function blobFetch(url: string, init?: RequestInit): Promise<Blob> {
   if (!baseUrl) throw new Error('バックエンドに接続していません')
-  const res = await fetch(api('/tts/speak'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: token },
-    body: JSON.stringify({
-      base_url: baseUrl,
-      text,
-      caption: voice.caption,
-      ref_wav: voice.refWav,
-      seed: voice.seed
-    })
-  })
+  const res = await fetch(url, { ...init, headers: { [TOKEN_HEADER]: token, ...(init?.headers ?? {}) } })
   if (!res.ok) {
     let detail = await res.text().catch(() => '')
     try {
@@ -997,4 +995,24 @@ export async function ttsSpeak(baseUrl: string, text: string, voice: TtsVoice): 
   }
   const type = (res.headers.get('content-type') ?? 'audio/ogg').split(';')[0].trim()
   return new Blob([await res.arrayBuffer()], { type })
+}
+
+/** 参照音声(ローカルの音声ファイル)を試聴のために取り出す。 */
+export async function fetchTtsRefAudio(path: string): Promise<Blob> {
+  return blobFetch(api(`/tts/ref-audio?path=${encodeURIComponent(path)}`))
+}
+
+/** 本文を音声にする(opus か wav の Blob)。 */
+export async function ttsSpeak(ttsBaseUrl: string, text: string, voice: TtsVoice): Promise<Blob> {
+  return blobFetch(api('/tts/speak'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      base_url: ttsBaseUrl,
+      text,
+      caption: voice.caption,
+      ref_wav: voice.refWav,
+      seed: voice.seed
+    })
+  })
 }

@@ -1,5 +1,7 @@
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from .. import tts
@@ -60,3 +62,26 @@ def tts_speak(body: SpeakRequest) -> Response:
     except tts.TtsError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return Response(content=data, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+# 参照音声として読める形式(Chromium が再生できるもの)
+_AUDIO_TYPES = {
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".m4a": "audio/mp4",
+}
+
+
+@router.get("/ref-audio")
+def tts_ref_audio(path: str) -> FileResponse:
+    """設定の参照音声(ローカルの音声ファイル)を試聴のために返す。"""
+    p = Path(path.strip()).expanduser()
+    media = _AUDIO_TYPES.get(p.suffix.lower())
+    if media is None:
+        raise HTTPException(status_code=400, detail=f"音声ファイルではありません: {p.name}")
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail=f"参照音声が見つかりません: {p}")
+    return FileResponse(str(p), media_type=media, headers={"Cache-Control": "no-store"})
