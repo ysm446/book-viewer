@@ -21,9 +21,21 @@ class LlmError(RuntimeError):
 class LlmHttpError(LlmError):
     """LLM サーバが HTTP エラーを返した(status を持つ)。"""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, body: str = "") -> None:
         super().__init__(message)
         self.status = status
+        self.body = body
+
+    def unsupported_format(self) -> bool:
+        """response_format(json_schema)を受け付けない古いサーバの 400 か。
+
+        文脈の長さ超過なども 400 で返るので、同じ要求を形式を変えて送り直すのは
+        エラー本文が response_format / schema に触れているときだけにする。
+        """
+        body = self.body.lower()
+        return self.status == 400 and any(
+            k in body for k in ("response_format", "json_schema", "schema", "grammar")
+        )
 
 
 # urlopen は接続時の失敗を URLError に包むが、読み出し中の切断・タイムアウトは素の例外で出る。
@@ -62,7 +74,7 @@ def _post(url: str, payload: dict, timeout: float) -> dict:
             return json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:500]
-        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}") from e
+        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}", body) from e
     except _NETWORK_ERRORS as e:
         # 接続失敗だけでなく、読み出し中のタイムアウト・切断(サーバが落ちた等)も同じ扱いにする。
         raise LlmError(f"LLM サーバへ接続できません: {e}") from e
@@ -122,8 +134,8 @@ def chat(
         )
     except LlmHttpError as e:
         # 古い llama-server 等が response_format(json_schema) を拒否した場合の後方互換。
-        # 接続失敗やタイムアウトで同じ呼び出しを繰り返さないよう、400 のときだけ落とす。
-        if json_schema is None or e.status != 400:
+        # 文脈超過などの 400 で同じ呼び出しを繰り返さないよう、形式の拒否のときだけ落とす。
+        if json_schema is None or not e.unsupported_format():
             raise
         res = _post(url, _payload(model, messages, temperature, False, think, True), timeout)
     try:
@@ -159,7 +171,7 @@ def chat_stream(
         resp = urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:500]
-        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}") from e
+        raise LlmHttpError(e.code, f"LLM サーバがエラーを返しました({e.code}): {body}", body) from e
     except _NETWORK_ERRORS as e:
         raise LlmError(f"LLM サーバへ接続できません: {e}") from e
     with resp:

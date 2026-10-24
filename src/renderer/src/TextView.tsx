@@ -33,6 +33,7 @@ import {
   type TranslationLive,
   type Work
 } from './api'
+import { fmtElapsed } from './format'
 import { Markdown } from './Markdown'
 import { textFontOf, type TextFont } from './textFonts'
 
@@ -103,14 +104,6 @@ type Job = {
   /** 実行中のジョブの経過秒(キューから受け取った時点の値) */
   elapsed?: number
 } | null
-
-/** 経過時間の表示(1 時間を超えたら h:mm:ss)。 */
-function fmtElapsed(sec: number): string {
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  const s = String(sec % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
-}
 
 /** 編集中のページ(原本と見比べて本文を直す)。 */
 interface Editing {
@@ -439,6 +432,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
           if (last?.status === 'error') setError(last.error ?? '文字起こしに失敗しました')
           // やり直したページもあるので、終了時に必ず読み込み直す。
           await reload()
+          // やり直したページの補助情報(要確認の行・手直し済み)も古いので捨てて、今のページだけ取り直す。
+          setTexts({})
           loadText(pageRef.current)
           setJob(null)
           polling.current = false
@@ -469,15 +464,20 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const isEnglish = work.language === 'en'
   const [tr, setTr] = useState<BookTranslation | null>(null)
   const [trJob, setTrJob] = useState<Job>(null)
+  // 訳の種類は ref で持つ(翻訳中の監視ループが古い種類の訳を取り続けないように)。
+  const trStyleRef = useRef(trStyle)
+  trStyleRef.current = trStyle
   const reloadTranslation = useCallback(async (): Promise<void> => {
-    setTr(await getTranslation(root, work.id, trStyle))
-  }, [root, work.id, trStyle])
-  // 本文が作り直されたら(文字起こし・手直し)、訳の対応も取り直す。
+    const style = trStyleRef.current
+    const t = await getTranslation(root, work.id, style)
+    if (trStyleRef.current === style) setTr(t)
+  }, [root, work.id])
+  // 本文が作り直されたら(文字起こし・手直し)、訳の種類を変えたら、訳の対応も取り直す。
   const signature = content?.signature
   useEffect(() => {
     if (!isEnglish || !signature) return
     reloadTranslation().catch((e) => setError((e as Error).message))
-  }, [isEnglish, signature, reloadTranslation])
+  }, [isEnglish, signature, trStyle, reloadTranslation])
 
   // 翻訳中の途中経過(LLM が書いている途中の訳文)。訳文を出しているときだけ取りに行く。
   const [live, setLive] = useState<TranslationLive | null>(null)
@@ -505,7 +505,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         const progressed = cur !== null && cur.current !== lastCurrent
         lastCurrent = cur ? cur.current : -1
         if (progressed) await reloadTranslation()
-        if (cur && translationRef.current !== 'off') setLive(await getTranslationLive(work.id))
+        if (cur && translationRef.current !== 'off') {
+          const next = await getTranslationLive(work.id)
+          // 途中経過が変わっていなければ組み直さない(本文全体の再描画・再計測を避ける)。
+          setLive((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
+        }
         if (!cur && !pending) {
           setLive(null)
           const recent = q.recent.filter((r) => r.work_id === work.id && r.kind === 'translate')

@@ -54,35 +54,12 @@ def _chat_setup(work_id: str, body: ChatRequest):
     return r, st["base_url"], archive_path
 
 
-@router.post("/works/{work_id}/chat")
-def work_chat(work_id: str, body: ChatRequest) -> dict:
-    """本について会話する(読んだ範囲の本文・章の要約・本文検索を文脈に、任意で現在ページ画像を添付)。"""
-    r, base_url, archive_path = _chat_setup(work_id, body)
-    try:
-        reply, sources = chat.chat_about_work(
-            r,
-            work_id,
-            base_url,
-            [m.model_dump() for m in body.messages],
-            current_page=body.current_page,
-            archive_path=archive_path,
-            include_image=body.include_image,
-            page_focus=body.page_focus,
-            general_knowledge=body.general_knowledge,
-            spoiler_guard=body.spoiler_guard,
-            system_prompt=body.system_prompt,
-            think=body.think,
-            context_chars=body.context_chars,
-            use_search=body.search,
-        )
-    except llm.LlmError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {"reply": reply, "sources": sources}
-
-
 @router.post("/works/{work_id}/chat/stream")
 def work_chat_stream(work_id: str, body: ChatRequest) -> StreamingResponse:
-    """work_chat のストリーム版。SSE(text/event-stream)で差分を送る。"""
+    """本について会話する(読んだ範囲の本文・章の要約・本文検索を文脈に、任意で現在ページ画像を添付)。
+
+    SSE(text/event-stream)で差分を送る。
+    """
     r, base_url, archive_path = _chat_setup(work_id, body)
     msgs = [m.model_dump() for m in body.messages]
 

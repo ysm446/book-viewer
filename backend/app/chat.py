@@ -436,44 +436,6 @@ def _build_chat_messages(
     return llm_messages, sources
 
 
-def chat_about_work(
-    root: Path,
-    work_id: str,
-    base_url: str,
-    messages: list[dict],
-    current_page: int | None = None,
-    archive_path: Path | None = None,
-    include_image: bool = False,
-    page_focus: bool = False,
-    general_knowledge: bool = True,
-    spoiler_guard: bool = True,
-    system_prompt: str | None = None,
-    model: str = "local",
-    think: bool | None = None,
-    context_chars: int | None = None,
-    use_search: bool = False,
-) -> tuple[str, dict]:
-    """本の情報と本文(読んだ範囲)を文脈に、会話履歴へ応答する(非ストリーム)。
-
-    戻り値は (応答, 使った材料)。材料は _build_chat_messages を参照。
-    """
-    llm_messages, sources = _build_chat_messages(
-        root,
-        work_id,
-        messages,
-        current_page,
-        archive_path,
-        include_image,
-        page_focus,
-        general_knowledge,
-        spoiler_guard,
-        system_prompt,
-        context_chars,
-        use_search,
-    )
-    return llm.chat(base_url, llm_messages, model=model, think=think), sources
-
-
 def chat_about_work_stream(
     root: Path,
     work_id: str,
@@ -491,9 +453,10 @@ def chat_about_work_stream(
     context_chars: int | None = None,
     use_search: bool = False,
 ):
-    """chat_about_work のストリーム版。差分 dict を順に yield する。
+    """本の情報と本文(読んだ範囲)を文脈に、会話履歴への応答の差分 dict を順に yield する。
 
-    最初に {"type": "sources", ...使った材料} を 1 回 yield してから、応答の差分を流す。
+    最初に {"type": "sources", ...使った材料(_build_chat_messages を参照)} を 1 回 yield してから、
+    応答の差分を流す。
     """
     llm_messages, sources = _build_chat_messages(
         root,

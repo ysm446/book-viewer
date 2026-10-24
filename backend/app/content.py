@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -146,9 +147,15 @@ def load(root: Path, work_id: str) -> dict:
     done = transcribe.done_pages(root, work_id)
     signature = _signature(book_dir, done, chapters, lang)
     path = book_dir / CONTENT_FILENAME
+    # 同じ材料なら、読んで解釈した結果を使い回す(チャット 1 回で何度も呼ばれ、数 MB の JSON になる)。
+    with _cache_lock:
+        cached = _cache.get(str(path))
+    if cached is not None and cached[0] == signature:
+        return cached[1]
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and data.get("signature") == signature:
+            _remember(path, signature, data)
             return data
     except (OSError, ValueError):
         pass
@@ -167,7 +174,22 @@ def load(root: Path, work_id: str) -> dict:
         tmp.replace(path)
     except OSError:
         pass  # 書けなくても表示・検索はできる(次に読むときにまた作る)
+    _remember(path, signature, data)
     return data
+
+
+# 解釈済みの content.json(パス → (signature, data))。本を何冊も開いても膨らみ過ぎないよう数を限る。
+_CACHE_MAX = 8
+_cache: dict[str, tuple[str, dict]] = {}
+_cache_lock = threading.Lock()
+
+
+def _remember(path: Path, signature: str, data: dict) -> None:
+    with _cache_lock:
+        _cache.pop(str(path), None)
+        _cache[str(path)] = (signature, data)
+        while len(_cache) > _CACHE_MAX:
+            del _cache[next(iter(_cache))]
 
 
 def _upto(block: dict, max_page: int | None) -> str:

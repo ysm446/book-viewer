@@ -1,19 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import llama_release, llm, llm_server
+from .. import llama_release, llm_server
 
 router = APIRouter()
-
-
-class PingRequest(BaseModel):
-    base_url: str
-
-
-@router.post("/llm/ping")
-def llm_ping(body: PingRequest) -> dict:
-    """LLM サーバへの到達性を確認する。"""
-    return {"ok": llm.ping(body.base_url)}
 
 
 @router.get("/llm/models")

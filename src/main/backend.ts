@@ -75,33 +75,51 @@ export class BackendProcess {
     this.port = await this.findFreePort()
     const python = this.resolvePython()
 
-    const args =
-      python === 'py'
-        ? ['-3', '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.port)]
-        : ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.port)]
+    // アクセスログは出さない(<img src> 用の URL に合言葉が載るため、ログに残さない)。
+    const uvicorn = [
+      '-m',
+      'uvicorn',
+      'app.main:app',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(this.port),
+      '--no-access-log'
+    ]
+    const args = python === 'py' ? ['-3', ...uvicorn] : uvicorn
 
-    this.proc = spawn(python, args, {
+    const proc = spawn(python, args, {
       cwd: this.backendDir,
       env: { ...process.env, PYTHONUNBUFFERED: '1', BOOK_VIEWER_TOKEN: this.token }
     })
+    this.proc = proc
 
-    this.proc.stdout?.on('data', (d) => console.log(`[backend] ${String(d).trimEnd()}`))
-    this.proc.stderr?.on('data', (d) => console.error(`[backend] ${String(d).trimEnd()}`))
+    proc.stdout?.on('data', (d) => console.log(`[backend] ${String(d).trimEnd()}`))
+    proc.stderr?.on('data', (d) => console.error(`[backend] ${String(d).trimEnd()}`))
     // 'error' リスナーが無いと spawn 失敗(python が見つからない等)が
     // uncaughtException になりメインプロセスごと落ちる。
-    this.proc.on('error', (err) => {
+    proc.on('error', (err) => {
       console.error('[backend] 起動に失敗:', err)
-      this.proc = null
+      if (this.proc === proc) this.proc = null
     })
     let started = false
-    this.proc.on('exit', (code) => {
+    proc.on('exit', (code) => {
       console.log(`[backend] exited with code ${code}`)
+      // 再起動後に古いプロセスの exit が遅れて届いても、新しいプロセスの記録を消したり
+      // 「停止しました」と誤って知らせたりしない。
+      if (this.proc !== proc) return
       this.proc = null
       // 起動待ちの間の終了は waitForHealth 側で失敗にする。起動後の落ちだけ通知する。
       if (!this.stopping && started) this.onUnexpectedExit?.(code)
     })
 
-    await this.waitForHealth()
+    try {
+      await this.waitForHealth()
+    } catch (e) {
+      // 応答しないまま残ったプロセスは止める(残すと監視されない孤児になる)。
+      await this.stop()
+      throw e
+    }
     started = true
   }
 

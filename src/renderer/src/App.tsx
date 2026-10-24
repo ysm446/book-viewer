@@ -33,6 +33,7 @@ import {
   type Work,
   type WritingMode
 } from './api'
+import { fmtElapsed } from './format'
 import { ImportDialog } from './ImportDialog'
 import { Reader, type ReaderJump } from './Reader'
 import { SearchResults } from './SearchResults'
@@ -83,10 +84,6 @@ const SIDEBAR_MIN = 240
 const SIDEBAR_DEFAULT = 340
 /** 最近使ったモデルとして覚える数(モデル一覧で上に並べる)。 */
 const RECENT_MODELS_MAX = 10
-
-function fmtElapsed(sec: number): string {
-  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
-}
 
 export function App(): JSX.Element {
   const [status, setStatus] = useState<Status>('connecting')
@@ -274,16 +271,21 @@ export function App(): JSX.Element {
   // ジョブキューを定期取得し、ジョブ完了時は一覧(タグ等)を更新する。
   useEffect(() => {
     let lastCurrent: string | null = null
+    let cancelled = false
     const tick = async (): Promise<void> => {
       try {
         const q = await getQueue()
-        setQueue(q)
+        if (cancelled) return
+        // 変わっていなければ同じオブジェクトを保ち、リーダー以下の再描画を起こさない。
+        setQueue((prev) => (JSON.stringify(prev) === JSON.stringify(q) ? prev : q))
         const cur = q.current?.work_id ?? null
         if (cur !== lastCurrent) {
           lastCurrent = cur
           if (root) {
             try {
-              setWorks(await listWorks(root))
+              const list = await listWorks(root)
+              // ルートを切り替えた後に古いルートの一覧で上書きしない。
+              if (!cancelled) setWorks(list)
             } catch {
               // 無視
             }
@@ -295,7 +297,10 @@ export function App(): JSX.Element {
     }
     const id = setInterval(tick, 2000)
     tick()
-    return () => clearInterval(id)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
   }, [root])
 
   // 現在ジョブの経過時間を1秒ごとに補間表示(ポーリング間も滑らかに)。
@@ -505,7 +510,14 @@ export function App(): JSX.Element {
     setCurrent(w)
     setReaderJump(null)
     setSearchOpen(false)
+    touchOpened(w.id)
     changeSettings({ lastWorkId: w.id })
+  }
+
+  // 「最近開いた順」が次の一覧の取り直しを待たずに反映されるよう、開いた時刻を手元でも更新する。
+  function touchOpened(workId: string): void {
+    const now = new Date().toISOString()
+    setWorks((ws) => ws.map((w) => (w.id === workId ? { ...w, last_opened_at: now } : w)))
   }
 
   function openSearch(): void {
@@ -521,6 +533,7 @@ export function App(): JSX.Element {
     setCurrent((c) => (c?.id === w.id ? c : w))
     setReaderJump({ page: hit.page, block: hit.block, terms, seq: Date.now() })
     setSearchOpen(false)
+    touchOpened(w.id)
     changeSettings({ lastWorkId: w.id })
   }
 

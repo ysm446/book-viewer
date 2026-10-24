@@ -79,7 +79,11 @@ export function SearchResults({
   const bookId = scope === 'book' && current ? current.id : undefined
 
   // 入力をデバウンスして検索する。古い応答で上書きしない。
+  // 閉じているときは探さない(一覧の検索欄の入力ごとに段落の検索が走らないように)。開いたときに探す。
+  const queryRef = useRef(query)
+  queryRef.current = query
   useEffect(() => {
+    if (!open) return
     const q = query.trim()
     setExpanded({})
     if (q === '') {
@@ -107,7 +111,7 @@ export function SearchResults({
       stale = true
       clearTimeout(id)
     }
-  }, [root, query, bookId])
+  }, [open, root, query, bookId])
 
   useEffect(() => {
     setSlow(false)
@@ -117,9 +121,12 @@ export function SearchResults({
   }, [loading])
 
   async function expand(workId: string): Promise<void> {
+    const q = query.trim()
     setExpanded((m) => ({ ...m, [workId]: 'loading' }))
     try {
-      const res = await searchPassages(root, query.trim(), workId)
+      const res = await searchPassages(root, q, workId)
+      // 返ってくる前に語が変わっていたら、古い語の結果を混ぜない。
+      if (queryRef.current.trim() !== q) return
       setExpanded((m) => ({ ...m, [workId]: res.books[0]?.hits ?? [] }))
     } catch (e) {
       setExpanded((m) => {

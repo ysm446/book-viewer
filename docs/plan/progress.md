@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-10-23 12:04
+更新日時: 2026-10-24 07:35
 
 ## 現在地
 
@@ -90,8 +90,13 @@ M0・M1 完了、M2〜M6 の最初の版まで(マイルストーンは [plan.md
    アプリ用の本文での整形(OCR の誤りの自動修正など)。章立ての無い本は 3〜6 万字ごとの区画で組むので、
    区画の変わり目で画面が途中で終わる(章立てを作ると章の変わり目になる)。
 1. 表を Markdown の表にする。
-2. 検索結果の画面の意味の近さの調整(類似度の足切り・RRF の重み。関係の薄い本の段落が少し混ざる)。
-   チャットの本文検索(chunks)を段落の索引(passage_vec)に寄せられるか。
+2. 検索結果の画面の意味の近さの調整(類似度の足切り 0.05・RRF k=60 は入れてあるが、関係の薄い本の段落が
+   少し混ざる)。チャットの本文検索(chunks)を段落の索引(passage_vec)に寄せられるか。
+3. レビューで見つけて未対応のもの: `Reader` に `onClose` が渡されておらず「← 一覧へ」と Esc での一覧への戻りが
+   動かない(TextView / ReaderChat の Escape の横取りはこの経路のための防御)。`/queue` の監視が App・TextView・
+   TocPanel・ReaderChat で別々に走っている(App の `queue` を渡して一本にできる)。Electron 33 は EOL(45 が最新)。
+   `sandbox: false` は不要(preload は contextBridge / ipcRenderer / webUtils だけ)。llama-server・Python が
+   親の異常終了で孤児になる(Job Object か親 PID の監視)。`Settings.tsx` の `llm` の更新が全体のスナップショットを送る。
 
 - 2026-09-21: コードレビューでの修正。API の合言葉(`BOOK_VIEWER_TOKEN`)、バックエンドの停止検知と再起動、
   スキャン時の索引の差分更新(`search_meta`)、ジョブ中の改名・削除の拒否(409)、macOS zip の `__MACOSX` 除外、
@@ -145,6 +150,13 @@ M0・M1 完了、M2〜M6 の最初の版まで(マイルストーンは [plan.md
   英語の本の訳文も `passage_ja`(訳文と訳の組の JSON)に索引し、日本語の語で英語の本の段落を探せるようにした。
   原文の一致には一致した文の訳を、訳文の一致には一致した文の原文を添える(`translate.block_pairs`。自然な訳 → 新しい種類の順)。
   The Giver(訳 866 段落)で「リンゴ」「ジョナス 記憶」「色」が見つかること、索引 2.3 秒・検索 8〜26 ms を確認。
+- 2026-10-24: 全体のコードレビュー(バックエンド・レンダラー・main プロセス・CSS・リポジトリ)に沿った修正と整理。
+  内容は [changelog](../changelog.md) の 2026-10-24。未対応の指摘は「次にやること」の 3 に。
+  削除した API: `POST /llm/ping`、`GET /works/{id}/pages`、`GET /works/{id}/text`、`POST /works/{id}/chat`(非ストリーム)。
+  追加した helper: `transcribe.read_all_texts`(DB 参照 1 回で全ページ)、`content` の解釈済みキャッシュ、
+  `archive` のページ名キャッシュ、`jobs._dedupe_key`(translate は訳の種類ごと)、レンダラーの `format.ts`(`fmtElapsed`)。
+  `npm run typecheck` / `npm run build` / pyflakes を通し、`iter_loose_archives`・`archive.read_page`・ジョブの重複判定は
+  一時フォルダで動作確認。実アプリでの画面の確認はこれから。
 - 2026-10-23: 検索結果の画面に意味の近さを混ぜた。段落ごとの Ruri v3 の埋め込み(`passage_vec` / `passage_vec_meta`、
   本文の指紋の同じ段落はベクトルを使い回す)、キューのジョブ種別 `vectors`(文字起こしのジョブの後と、スキャン後に
   `jobs.enqueue_stale_vectors` で自動。読み込んでいなかった埋め込みモデルは終わったら手放す)、`embedding.search_passages`

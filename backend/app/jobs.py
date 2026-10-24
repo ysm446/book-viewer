@@ -23,6 +23,10 @@ _current: dict | None = None
 _recent: list[dict] = []
 _cancel_ids: set[str] = set()
 _worker_started = False
+# 終わったジョブを覚えておく数(画面には最新のものだけ出す)。
+_RECENT_MAX = 12
+# スキャン後の段落の索引の積み込みが同時に何本も走らないようにする。
+_stale_vectors_running = False
 
 
 class NotFound(LookupError):
@@ -54,6 +58,12 @@ def _ensure_worker() -> None:
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _dedupe_key(job: dict) -> tuple:
+    """重複とみなす単位。translate は訳の種類ごとに別のジョブ(自然な訳の最中に直訳を積める)。"""
+    style = (job.get("extra") or {}).get("style") if job["kind"] == "translate" else None
+    return (job["work_id"], job["kind"], style)
+
+
 def enqueue(
     root: str,
     work_id: str,
@@ -64,7 +74,7 @@ def enqueue(
     engine: str = "yomitoku",
     extra: dict | None = None,
 ) -> dict:
-    """ジョブを積む。同じ本・同じ種類のジョブが待機中か実行中なら積まない。
+    """ジョブを積む。同じ本・同じ種類(translate は同じ訳の種類)のジョブが待機中か実行中なら積まない。
 
     - transcribe: 文字起こし(pages 省略時は未処理の全ページ、force で作り直し。engine を使う)
     - structure: 章立てと要約(force で章立てから作り直し)
@@ -77,23 +87,22 @@ def enqueue(
         raise ValueError(f"未対応のジョブです: {kind}")
     # DB の読み込みはロックの外で(DB が混んでいるときに snapshot() まで待たせない)。
     title = _title(Path(root), work_id)
+    job = {
+        "work_id": work_id,
+        "root": root,
+        "title": title,
+        "kind": kind,
+        "pages": pages,
+        "force": force,
+        "engine": engine,
+        "extra": extra or {},
+    }
     with _cond:
-        busy = {(j["work_id"], j["kind"]) for j in _pending}
+        busy = {_dedupe_key(j) for j in _pending}
         if _current:
-            busy.add((_current["work_id"], _current["kind"]))
-        if (work_id, kind) not in busy:
-            _pending.append(
-                {
-                    "work_id": work_id,
-                    "root": root,
-                    "title": title,
-                    "kind": kind,
-                    "pages": pages,
-                    "force": force,
-                    "engine": engine,
-                    "extra": extra or {},
-                }
-            )
+            busy.add(_dedupe_key(_current))
+        if _dedupe_key(job) not in busy:
+            _pending.append(job)
             _cond.notify()
     _ensure_worker()
     return snapshot()
@@ -138,7 +147,7 @@ def snapshot() -> dict:
             "pending": [
                 {"work_id": j["work_id"], "title": j["title"], "kind": j["kind"]} for j in _pending
             ],
-            "recent": list(_recent[-12:]),
+            "recent": list(_recent[-_RECENT_MAX:]),
         }
 
 
@@ -179,7 +188,7 @@ def _run(job: dict) -> None:
         try:
             embedding.build_passage_index(root, work_id, cancel_check=cancel_check)
         finally:
-            if not was_loaded:
+            if not was_loaded and not _next_needs_embedding():
                 embedding.stop()
     elif job["kind"] == "translate":
         if not base_url:
@@ -196,6 +205,12 @@ def _run(job: dict) -> None:
             model=st.get("model"),
             cancel_check=cancel_check,
         )
+
+
+def _next_needs_embedding() -> bool:
+    """次に待っているジョブも埋め込みモデルを使うか(スキャン後に何冊も続くとき、読み込み直さない)。"""
+    with _lock:
+        return bool(_pending) and _pending[0]["kind"] in ("vectors", "index")
 
 
 def _worker() -> None:
@@ -244,12 +259,21 @@ def _worker() -> None:
                     "error": error,
                 }
             )
+            del _recent[:-_RECENT_MAX]
             _cancel_ids.discard(job["work_id"])
             _current = None
 
 
 def enqueue_stale_vectors(root: str) -> None:
-    """段落の意味の索引が無い・古い本のジョブを積む(スキャンの後に別のスレッドで呼ぶ)。"""
+    """段落の意味の索引が無い・古い本のジョブを積む(スキャンの後に別のスレッドで呼ぶ)。
+
+    続けてスキャンされても同時には 1 本しか走らせない(本ごとに content.json を読むので重い)。
+    """
+    global _stale_vectors_running
+    with _lock:
+        if _stale_vectors_running:
+            return
+        _stale_vectors_running = True
     try:
         with connect(Path(root)) as conn:
             ids = [r["id"] for r in conn.execute("SELECT id FROM works ORDER BY last_opened_at DESC")]
@@ -258,3 +282,6 @@ def enqueue_stale_vectors(root: str) -> None:
                 enqueue(root, work_id, "vectors")
     except Exception:  # noqa: BLE001 - 索引は次のスキャンでまた確かめる
         pass
+    finally:
+        with _lock:
+            _stale_vectors_running = False

@@ -154,10 +154,6 @@ def _signature(pages: dict[int, str]) -> str:
     return h.hexdigest()
 
 
-def _page_texts(root: Path, work_id: str) -> dict[int, str]:
-    return {p: transcribe.read_text(root, work_id, p) or "" for p in transcribe.done_pages(root, work_id)}
-
-
 def status(root: Path, work_id: str) -> dict:
     """索引の状態: {chunks, stale(本文か埋め込みモデルが変わった), model, updated_at}。"""
     with connect(root) as conn:
@@ -166,7 +162,7 @@ def status(root: Path, work_id: str) -> dict:
             (work_id,),
         ).fetchone()
     try:
-        current = _signature(_page_texts(root, work_id))
+        current = _signature(transcribe.read_all_texts(root, work_id))
     except transcribe.TranscribeError:
         current = None
     model_changed = bool(row) and row["model"] != MODEL_NAME
@@ -184,7 +180,7 @@ def build_index(
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """本文を分けて埋め込み、索引を作り直す。まとまりの数を返す。"""
-    pages = _page_texts(root, work_id)
+    pages = transcribe.read_all_texts(root, work_id)
     if not pages:
         raise EmbeddingError("文字起こしされたページがありません。先に文字起こしをしてください。")
     # アプリ用の本文を分ける(ページをまたいで切れた段落はつないであり、続きは始まりのページの

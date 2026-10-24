@@ -13,8 +13,8 @@ export interface Work {
   /** 本の言語(文字起こしの後処理を切り替える。取り込み時に指定) */
   language: BookLanguage
   page_count: number
-  page_direction: string
-  spread_offset: string
+  page_direction: Direction
+  spread_offset: SpreadOffset
   sort_index: number | null
   added_at: string
   last_opened_at: string | null
@@ -72,18 +72,25 @@ export async function initApi(): Promise<{ baseUrl: string; port: number }> {
   return info
 }
 
-/** API の合言葉付きの URL。<img src> でも使えるよう、すべての URL にクエリで付ける。 */
+/** API の URL。fetch では合言葉をヘッダで送る(URL に載せるとアクセスログに残る)。 */
 function api(path: string): string {
-  const sep = path.includes('?') ? '&' : '?'
-  return `${baseUrl}/api${path}${sep}token=${encodeURIComponent(token)}`
+  return `${baseUrl}/api${path}`
 }
+
+/** 合言葉付きの URL。ヘッダを付けられない <img src> 用。 */
+function imageUrl(path: string): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${api(path)}${sep}token=${encodeURIComponent(token)}`
+}
+
+const TOKEN_HEADER = 'X-Book-Viewer-Token'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   // 起動直後、接続先が決まる前の呼び出し(定期取得など)は送らない(file:// へ飛んでしまう)。
   if (!baseUrl) throw new Error('バックエンドに接続していません')
   const res = await fetch(api(path), {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
+    headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: token, ...(init?.headers ?? {}) }
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -320,7 +327,7 @@ export async function deleteBookmark(
 
 /** ページ画像の URL。<img src> に直接渡す。 */
 export function pageUrl(root: string, workId: string, index: number): string {
-  return api(`/works/${workId}/pages/${index}?root=${encodeURIComponent(root)}`)
+  return imageUrl(`/works/${workId}/pages/${index}?root=${encodeURIComponent(root)}`)
 }
 
 /** 本にタグを付ける(無ければ作成)。 */
@@ -658,7 +665,7 @@ export async function enqueueStructure(
 
 /** 本文中の図(本フォルダ figures/ の切り抜き画像)の URL。 */
 export function figureUrl(root: string, workId: string, name: string): string {
-  return api(`/works/${workId}/figures/${encodeURIComponent(name)}?root=${encodeURIComponent(root)}`)
+  return imageUrl(`/works/${workId}/figures/${encodeURIComponent(name)}?root=${encodeURIComponent(root)}`)
 }
 
 export interface ChatTurn {
@@ -694,8 +701,7 @@ interface ChatOpts {
   think?: boolean
   /** 本文を渡す上限(文字数)。省略時は backend の既定 */
   contextChars?: number
-  /** 本文検索を使う(埋め込み用の llama-server を起動するための情報)。省略時は検索しない */
-  /** 本文検索(埋め込みの索引)も使うか */
+  /** 本文検索(埋め込みの索引)も使うか。省略時は検索しない */
   search?: boolean
 }
 
@@ -731,7 +737,7 @@ export async function chatAboutWorkStream(
 ): Promise<void> {
   const res = await fetch(api(`/works/${workId}/chat/stream`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: token },
     body: chatBody(root, messages, opts),
     signal
   })
@@ -771,7 +777,10 @@ export async function chatAboutWorkStream(
         })
       } else if (delta.type === 'reasoning' && delta.text) handlers.onReasoning?.(delta.text)
       else if (delta.type === 'content' && delta.text) handlers.onContent?.(delta.text)
-      else if (delta.type === 'error') throw new Error(delta.text || 'LLM エラー')
+      else if (delta.type === 'error') {
+        void reader.cancel().catch(() => {})
+        throw new Error(delta.text || 'LLM エラー')
+      }
     }
   }
 }
@@ -897,5 +906,5 @@ export async function downloadLlamaBuild(
 
 /** 本サムネイルの URL。<img src> に直接渡す。 */
 export function thumbnailUrl(root: string, workId: string): string {
-  return api(`/works/${workId}/thumbnail?root=${encodeURIComponent(root)}`)
+  return imageUrl(`/works/${workId}/thumbnail?root=${encodeURIComponent(root)}`)
 }

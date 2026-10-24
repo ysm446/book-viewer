@@ -7,6 +7,8 @@ work_id は内容フィンガープリントなので、内容が変わらない
 from __future__ import annotations
 
 import io
+import os
+import threading
 from pathlib import Path
 
 from PIL import Image
@@ -28,8 +30,17 @@ def get_or_create(root: Path, work_id: str, archive_path: Path) -> Path:
     if out.exists():
         return out
     data, _ = archive.read_page(archive_path, 0)
+    # 一時ファイルに書いてから置く(書きかけの JPEG が残ったり、一覧の同時要求どうしで
+    # 同じファイルを開いて失敗したりしないように)。
+    tmp = out.with_name(f"{out.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     with Image.open(io.BytesIO(data)) as img:
         img = img.convert("RGB")
         img.thumbnail(THUMB_MAX)
-        img.save(out, "JPEG", quality=82)
+        img.save(tmp, "JPEG", quality=82)
+    try:
+        tmp.replace(out)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        if not out.exists():
+            raise
     return out

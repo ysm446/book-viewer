@@ -70,14 +70,6 @@ def _book_dir(root: Path, work_id: str) -> tuple[Path, dict]:
     return book_dir, book
 
 
-def _page_texts(root: Path, work_id: str) -> dict[int, str]:
-    """文字起こし済みページの Markdown(0 始まりのページ番号 → 本文)。"""
-    out = {}
-    for p in transcribe.done_pages(root, work_id):
-        out[p] = transcribe.read_text(root, work_id, p) or ""
-    return out
-
-
 # ---- 章立て ----------------------------------------------------------------
 
 
@@ -174,7 +166,7 @@ def _normalize_chapters(raw: list, page_count: int, fill_front: bool = True) -> 
 def detect_chapters(root: Path, work_id: str, base_url: str) -> list[dict]:
     """章立てを LLM で作って book.json に保存し、返す。"""
     book_dir, book = _book_dir(root, work_id)
-    texts = _page_texts(root, work_id)
+    texts = transcribe.read_all_texts(root, work_id)
     if not texts:
         raise StructureError("文字起こしされたページがありません。先に文字起こしをしてください。")
     page_count = int(book.get("page_count") or max(texts) + 1)

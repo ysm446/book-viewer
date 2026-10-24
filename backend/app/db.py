@@ -168,13 +168,15 @@ _init_lock = threading.Lock()
 def connect(root: Path) -> Iterator[sqlite3.Connection]:
     """ルートの library.db へ接続する。スキーマが無ければ作成する。"""
     path = db_path(root)
+    # 動作中に .book-viewer/ が消されて DB が作り直されるときは、スキーマももう一度作る。
+    fresh = not path.exists()
     # busy timeout を長めに取り、スキャン等の書き込み中でも待って続行できるようにする。
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         key = str(path)
-        if key not in _initialized:
+        if fresh or key not in _initialized:
             with _init_lock:
                 if key not in _initialized:
                     _init(conn)

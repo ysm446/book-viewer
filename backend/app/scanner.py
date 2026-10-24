@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import library, search
+from . import library, search, thumbnails
 from .db import connect
 
 
@@ -79,6 +79,7 @@ def scan(root: Path) -> dict:
             if row["id"] not in seen:
                 conn.execute("DELETE FROM works WHERE id = ?", (row["id"],))
                 search.remove_index(conn, row["id"])
+                thumbnails.thumbnail_path(root, row["id"]).unlink(missing_ok=True)
                 removed += 1
         conn.commit()
         total = conn.execute("SELECT COUNT(*) AS c FROM works").fetchone()["c"]

@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import * as os from 'os'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import { statSync } from 'fs'
 import { BackendProcess } from './backend'
 import { captureWindow, savePages, type SavePageInput } from './screenshot'
@@ -44,8 +44,11 @@ function queryNvidiaSmi(): Promise<GpuInfo> {
       child.kill()
       resolve(none)
     }, 3000)
-    const child = exec(
-      'nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits',
+    // シェルを介さず直接起こす(exec だと kill() が cmd.exe だけを止めて nvidia-smi が残る)。
+    const child = execFile(
+      'nvidia-smi',
+      ['--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
+      { windowsHide: true },
       (err, stdout) => {
         clearTimeout(timeout)
         if (err || !stdout) {

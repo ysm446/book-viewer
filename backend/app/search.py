@@ -312,7 +312,7 @@ def search_passages(root: Path, q: str, work_id: str | None = None) -> dict:
     (無ければ段落の初め)の訳を ja に添える(ja_marks は空)。訳文で一致したときは、snippet に一致した文の
     原文、ja に訳文の抜粋を入れる(marks は空)。semantic は意味で探せた本の数と、探せなかった理由。
     """
-    from . import embedding, structure  # transcribe → progress → … の循環を避けてここで読む
+    from . import embedding, library, structure  # transcribe → progress → … の循環を避けてここで読む
 
     terms = parse_terms(q)
     if not terms:
@@ -330,7 +330,7 @@ def search_passages(root: Path, q: str, work_id: str | None = None) -> dict:
         works = {
             r["id"]: dict(r)
             for r in conn.execute(
-                "SELECT w.id, w.title, w.author, COALESCE(rs.last_page, 0) AS last_page, "
+                "SELECT w.id, w.title, w.author, w.rel_path, COALESCE(rs.last_page, 0) AS last_page, "
                 "COALESCE(rs.completed, 0) AS completed "
                 "FROM works w LEFT JOIN reading_state rs ON rs.work_id = w.id"
             ).fetchall()
@@ -396,8 +396,13 @@ def search_passages(root: Path, q: str, work_id: str | None = None) -> dict:
                     (wid, *need),
                 ).fetchall()
             } if need else {}
+            # 章の名前だけが要るので、要約まで読む get_structure は使わず book.json から作る。
             try:
-                chapters = structure.get_structure(root, wid)["chapters"]
+                book_dir = library.book_dir_for(root, w["rel_path"])
+                book = (library.read_book(book_dir) if book_dir else None) or {}
+                chapters = structure.chapter_ranges(
+                    book.get("chapters") or [], int(book.get("page_count") or 0)
+                )
             except Exception:  # noqa: BLE001 - 章立てが読めなくても箇所は出す
                 chapters = []
             title_lower = w["title"].lower()

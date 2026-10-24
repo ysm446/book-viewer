@@ -23,15 +23,6 @@ def get_thumbnail(work_id: str, root: str) -> Response:
     )
 
 
-@router.get("/{work_id}/pages")
-def list_pages(work_id: str, root: str) -> dict:
-    """ページ数とエントリ名一覧を返す。"""
-    r = get_root(root)
-    path = resolve_archive(r, work_id)
-    names = archive.list_images(path)
-    return {"count": len(names), "names": names}
-
-
 @router.get("/{work_id}/pages/{index}")
 def get_page(work_id: str, index: int, root: str) -> Response:
     """index 番目(0 始まり)のページ画像を返す。"""

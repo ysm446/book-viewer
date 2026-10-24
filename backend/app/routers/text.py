@@ -8,16 +8,6 @@ from ..resolve import get_root
 router = APIRouter(prefix="/works")
 
 
-@router.get("/{work_id}/text")
-def text_status(work_id: str, root: str) -> dict:
-    """文字起こし済みのページ番号(0 始まり)を返す。"""
-    r = get_root(root)
-    try:
-        return {"pages": transcribe.done_pages(r, work_id)}
-    except transcribe.TranscribeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.get("/{work_id}/text/{index}")
 def page_text(work_id: str, index: int, root: str) -> dict:
     """ページの本文(Markdown)・確信度の低い行・手で直したか。未処理なら markdown は null。"""

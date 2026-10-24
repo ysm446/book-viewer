@@ -114,13 +114,33 @@ def page_count(archive_path: Path) -> int:
     return len(list_images(archive_path))
 
 
+# zip のページ名の並び((パス, 更新時刻, サイズ) → 名前)。ページ送り・文字起こしでページごとに
+# 全エントリを並べ直さないために覚えておく。
+_NAMES_CACHE_MAX = 16
+_names_cache: dict[tuple[str, int, int], list[str]] = {}
+_names_lock = threading.Lock()
+
+
+def _cached_image_names(archive_path: Path, zf: zipfile.ZipFile) -> list[str]:
+    st = archive_path.stat()
+    key = (str(archive_path), st.st_mtime_ns, st.st_size)
+    with _names_lock:
+        names = _names_cache.get(key)
+    if names is None:
+        names = _image_names(zf)
+        with _names_lock:
+            _names_cache[key] = names
+            while len(_names_cache) > _NAMES_CACHE_MAX:
+                del _names_cache[next(iter(_names_cache))]
+    return names
+
+
 def read_page(archive_path: Path, index: int) -> tuple[bytes, str]:
     """index 番目(0 始まり)のページ画像のバイト列と MIME タイプを返す。"""
     if _is_pdf(archive_path):
         return _pdf_read_page(archive_path, index)
-    # 名前一覧と読み出しで zip を開き直さない(central directory のパースは1回で済む)。
     with zipfile.ZipFile(archive_path) as zf:
-        names = _image_names(zf)
+        names = _cached_image_names(archive_path, zf)
         if index < 0 or index >= len(names):
             raise IndexError(f"page index out of range: {index} (count={len(names)})")
         name = names[index]

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import zipfile
@@ -141,17 +142,21 @@ def rename_book(root: Path, book_dir: Path, title: str) -> Path:
 
 
 def iter_loose_archives(root: Path):
-    """本フォルダに入っていない(未取り込みの)アーカイブを列挙する。"""
-    for path in sorted(root.rglob("*")):
-        rel_parts = path.relative_to(root).parts
-        if rel_parts[0] in (DATA_DIRNAME, LEGACY_DATA_DIRNAME):
-            continue
-        if not path.is_file() or path.suffix.lower() not in ARCHIVE_EXTENSIONS:
-            continue
-        # 本フォルダ配下のものは取り込み済み。
-        if any(is_book_dir(root.joinpath(*rel_parts[:i])) for i in range(1, len(rel_parts))):
-            continue
-        yield path
+    """本フォルダに入っていない(未取り込みの)アーカイブを列挙する。
+
+    本フォルダ(取り込み済み)とアプリのデータフォルダの中には降りない
+    (ページの Markdown・図・サムネイルまで全部なめると、スキャンのたびに重い)。
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        d = Path(dirpath)
+        if d == root:
+            dirnames[:] = [n for n in dirnames if n not in (DATA_DIRNAME, LEGACY_DATA_DIRNAME)]
+        dirnames[:] = sorted(n for n in dirnames if not is_book_dir(d / n))
+        for name in filenames:
+            if Path(name).suffix.lower() in ARCHIVE_EXTENSIONS:
+                found.append(d / name)
+    yield from sorted(found)
 
 
 class LibraryError(Exception):

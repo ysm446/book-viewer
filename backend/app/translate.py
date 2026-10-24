@@ -287,8 +287,9 @@ def _translate_batch(
                 last = time.monotonic()
                 _set_live(work_id, signature, style_id, batch, text, model)
     except llm.LlmHttpError as e:
-        # json_schema のストリーミングを受け付けないサーバは、まとめて受け取る(途中経過は出ない)
-        if e.status != 400:
+        # json_schema のストリーミングを受け付けないサーバは、まとめて受け取る(途中経過は出ない)。
+        # 文脈超過などの 400 は、同じ要求を送り直しても直らないのでそのまま伝える。
+        if not e.unsupported_format():
             raise
         return llm.chat(base_url, messages, temperature=0.2, think=False, json_schema=_BATCH_SCHEMA)
     return llm.strip_think(text)

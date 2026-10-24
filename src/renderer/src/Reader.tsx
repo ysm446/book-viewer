@@ -250,14 +250,14 @@ export function Reader({
 }: ReaderProps): JSX.Element {
   const count = work.page_count
   const [dirOverride, setDirOverride] = useState<Direction>(
-    (work.page_direction as Direction) || 'default'
+    work.page_direction || 'default'
   )
   const effectiveDir =
     dirOverride === 'default' ? settings.defaultDirection : dirOverride
   const rtl = effectiveDir === 'rtl'
 
   const [offsetOverride, setOffsetOverride] = useState<SpreadOffset>(
-    (work.spread_offset as SpreadOffset) || 'default'
+    work.spread_offset || 'default'
   )
   const effectiveOffset =
     offsetOverride === 'default' ? (settings.coverAlone ? 1 : 0) : Number(offsetOverride)

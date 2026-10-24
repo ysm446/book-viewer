@@ -146,8 +146,11 @@ def update_reading_state(work_id: str, root: str, body: ReadingStateUpdate) -> d
     """既読位置を保存する(続きから読む)。"""
     r = get_root(root)
     with connect(r) as conn:
-        if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
+        row = conn.execute("SELECT page_count FROM works WHERE id = ?", (work_id,)).fetchone()
+        if row is None:
             raise HTTPException(status_code=404, detail="本が見つかりません")
+        # 範囲外の値は保存しない(未読の判定・再開位置がおかしくなる)。
+        last_page = max(0, min(body.last_page, max(0, int(row["page_count"]) - 1)))
         conn.execute(
             """
             INSERT INTO reading_state (work_id, last_page, completed, updated_at)
@@ -157,7 +160,7 @@ def update_reading_state(work_id: str, root: str, body: ReadingStateUpdate) -> d
                 completed = excluded.completed,
                 updated_at = excluded.updated_at
             """,
-            (work_id, body.last_page, int(body.completed), _now()),
+            (work_id, last_page, int(body.completed), _now()),
         )
         conn.execute(
             "UPDATE works SET last_opened_at = ? WHERE id = ?", (_now(), work_id)

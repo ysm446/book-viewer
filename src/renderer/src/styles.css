@@ -286,10 +286,6 @@ input[type='checkbox']:focus-visible {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.topbar-title {
-  font-size: 14px;
-  margin: 0;
-}
 .topbar-spacer {
   flex: 1;
 }
@@ -527,6 +523,17 @@ input[type='checkbox']:focus-visible {
   padding: 4px 10px 8px;
   border-bottom: 1px solid var(--border);
 }
+/* 入力欄の focus(枠を青にする。各入力欄で共通) */
+.search-input:focus,
+.rename-input:focus,
+.text-edit-area:focus,
+.tag-input:focus,
+.toc-edit-input:focus,
+.system-prompt:focus,
+.import-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .search-input {
   height: 30px;
   padding: 0 8px;
@@ -535,10 +542,6 @@ input[type='checkbox']:focus-visible {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
-}
-.search-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .filter-toggle {
   display: flex;
@@ -616,7 +619,7 @@ input[type='checkbox']:focus-visible {
   border: none;
   border-radius: 4px;
   color: var(--text-sub);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -701,10 +704,6 @@ input[type='checkbox']:focus-visible {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
-}
-.rename-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .rename-note {
   margin: 0 16px;
@@ -1251,7 +1250,7 @@ input[type='checkbox']:focus-visible {
   font-weight: 600;
 }
 .chat-md h1 {
-  font-size: 15px;
+  font-size: 16px;
 }
 .chat-md h2 {
   font-size: 14px;
@@ -1783,10 +1782,6 @@ input[type='checkbox']:focus-visible {
   resize: none;
   user-select: text;
 }
-.text-edit-area:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 .text-empty {
   display: flex;
   flex-direction: column;
@@ -2088,10 +2083,6 @@ input[type='checkbox']:focus-visible {
   border-radius: 6px;
   font-size: 12px;
 }
-.tag-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
 /* ---- リーダー上部のパネル(目次と要約など) ---- */
 .reader-info {
@@ -2282,10 +2273,6 @@ input[type='checkbox']:focus-visible {
   border-radius: 6px;
   font-size: 13px;
 }
-.toc-edit-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 .toc-edit-page {
   flex: 0 0 72px;
   font-variant-numeric: tabular-nums;
@@ -2428,23 +2415,11 @@ input[type='checkbox']:focus-visible {
   line-height: 1.6;
   font-family: inherit;
 }
-.system-prompt:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 .settings-llm-url {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-.ping-ok {
-  color: var(--ok);
-  font-size: 12px;
-}
-.ping-ng {
-  color: var(--danger);
-  font-size: 12px;
 }
 
 /* ---- ページスクラバー(オーバーレイ) ---- */
@@ -2485,7 +2460,7 @@ input[type='checkbox']:focus-visible {
   top: 50%;
   transform: translateY(-50%);
   height: 3px;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--track);
   border-radius: 2px;
 }
 /* 現在地のつまみ(白い円)。ドラッグ中は指している位置へ動く。 */
@@ -2527,7 +2502,7 @@ input[type='checkbox']:focus-visible {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-popup);
   pointer-events: none;
 }
 .scrubber-preview img {
@@ -2978,10 +2953,6 @@ input[type='checkbox']:focus-visible {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
-}
-.import-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .import-input:disabled {
   opacity: 0.5;

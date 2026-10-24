@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, memo, type ReactNode } from 'react'
 
 /**
  * LLM 応答向けの軽量 Markdown 表示。
@@ -92,7 +92,9 @@ function isBlockStart(line: string): boolean {
   )
 }
 
-export function Markdown({
+// 本文のブロック・チャットの各発言から呼ばれるので、props が同じなら解釈し直さない
+// (ストリーミング中の毎トークン・キューの取得ごとに全ブロックを組み直さないため)。
+export const Markdown = memo(function Markdown({
   text,
   className = 'chat-md',
   resolveImage,
@@ -270,4 +272,4 @@ export function Markdown({
   }
 
   return <div className={className}>{blocks}</div>
-}
+})

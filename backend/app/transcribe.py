@@ -239,9 +239,7 @@ def read_text(root: Path, work_id: str, index: int) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
-def done_pages(root: Path, work_id: str) -> list[int]:
-    """文字起こし済みのページ番号(0 始まり)。"""
-    book_dir, _, _ = _book(root, work_id)
+def _done_pages_in(book_dir: Path) -> list[int]:
     d = book_dir / PAGES_DIRNAME
     if not d.is_dir():
         return []
@@ -250,6 +248,22 @@ def done_pages(root: Path, work_id: str) -> list[int]:
         if p.stem.isdigit():
             out.append(int(p.stem) - 1)
     return sorted(out)
+
+
+def done_pages(root: Path, work_id: str) -> list[int]:
+    """文字起こし済みのページ番号(0 始まり)。"""
+    book_dir, _, _ = _book(root, work_id)
+    return _done_pages_in(book_dir)
+
+
+def read_all_texts(root: Path, work_id: str) -> dict[int, str]:
+    """文字起こし済みの全ページの本文(0 始まりのページ番号 → Markdown)。
+
+    本の場所の解決(DB の参照)は 1 回だけにする(ページごとに read_text を呼ぶと
+    数百ページの本で数百回の接続になる)。
+    """
+    book_dir, _, _ = _book(root, work_id)
+    return {p: page_path(book_dir, p).read_text(encoding="utf-8") for p in _done_pages_in(book_dir)}
 
 
 # ---- ページをまたぐ段落のつなぎ(つなぐ処理は content.py) ----
