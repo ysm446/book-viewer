@@ -1197,6 +1197,7 @@ export function Reader({
             llmReady={llmReady}
             dictionary={dictionary}
             jump={textJump}
+            tts={settings.tts}
           />
         ) : (
         <>

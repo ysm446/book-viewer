@@ -908,3 +908,93 @@ export async function downloadLlamaBuild(
 export function thumbnailUrl(root: string, workId: string): string {
   return imageUrl(`/works/${workId}/thumbnail?root=${encodeURIComponent(root)}`)
 }
+
+// ---- 音声読み上げ(Irodori-TTS) ----
+
+/** 読み上げサーバーの状態。 */
+export interface TtsStatus {
+  installed: boolean
+  server_dir: string
+  server_dir_default: string
+  models_dir: string
+  base_url: string
+  uv: boolean
+  /** 合成できる(動いていてモデルも読み込み済み) */
+  running: boolean
+  /** 起動・モデルの読み込み中 */
+  starting: boolean
+  /** 別のアプリが起動したサーバーを使っている(止められない) */
+  external: boolean
+  checkpoint: string | null
+  error: string | null
+  log_path: string
+  install: { phase: 'step' | 'done' | 'error'; label: string; lines: string[]; error: string | null } | null
+}
+
+/** 読み上げサーバーの置き場と接続先(設定の値)。 */
+export interface TtsServerOpts {
+  serverDir: string
+  modelsDir: string
+  baseUrl: string
+}
+
+function ttsQuery(o: TtsServerOpts): string {
+  const q = new URLSearchParams({ server_dir: o.serverDir, models_dir: o.modelsDir, base_url: o.baseUrl })
+  return q.toString()
+}
+
+function ttsBody(o: TtsServerOpts): string {
+  return JSON.stringify({ server_dir: o.serverDir, models_dir: o.modelsDir, base_url: o.baseUrl })
+}
+
+export async function getTtsStatus(o: TtsServerOpts): Promise<TtsStatus> {
+  return jsonFetch(`/tts/status?${ttsQuery(o)}`)
+}
+
+/** サーバーを起動する(待たずに返る。準備ができたかは getTtsStatus で見る)。 */
+export async function startTts(o: TtsServerOpts): Promise<TtsStatus> {
+  return jsonFetch('/tts/start', { method: 'POST', body: ttsBody(o) })
+}
+
+export async function stopTts(): Promise<TtsStatus> {
+  return jsonFetch('/tts/stop', { method: 'POST' })
+}
+
+/** Irodori-TTS-Server を入れる(背後で実行。進み具合は getTtsStatus の install)。 */
+export async function installTts(o: TtsServerOpts): Promise<TtsStatus> {
+  return jsonFetch('/tts/install', { method: 'POST', body: ttsBody(o) })
+}
+
+/** 声の指定(設定の値)。 */
+export interface TtsVoice {
+  caption: string
+  refWav: string
+  seed: number | null
+}
+
+/** 本文を音声にする(opus か wav の Blob)。 */
+export async function ttsSpeak(baseUrl: string, text: string, voice: TtsVoice): Promise<Blob> {
+  if (!baseUrl) throw new Error('バックエンドに接続していません')
+  const res = await fetch(api('/tts/speak'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: token },
+    body: JSON.stringify({
+      base_url: baseUrl,
+      text,
+      caption: voice.caption,
+      ref_wav: voice.refWav,
+      seed: voice.seed
+    })
+  })
+  if (!res.ok) {
+    let detail = await res.text().catch(() => '')
+    try {
+      detail = String(JSON.parse(detail).detail ?? detail)
+    } catch {
+      // そのまま
+    }
+    throw new Error(detail || `${res.status} ${res.statusText}`)
+  }
+  const type = (res.headers.get('content-type') ?? 'audio/ogg').split(';')[0].trim()
+  return new Blob([await res.arrayBuffer()], { type })
+}

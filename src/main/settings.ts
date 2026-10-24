@@ -48,7 +48,25 @@ export interface AppSettings {
     /** 最近読み込んだモデルのパス(先頭が最新)。モデル一覧で上に並べる */
     recentModels: string[]
   }
+  /** 音声読み上げ(Irodori-TTS。日本語の本文をローカルで合成する) */
+  tts: {
+    /** Irodori-TTS-Server のフォルダ(空なら vendor/irodori-tts-server。別のアプリで入れたものも指せる) */
+    serverDir: string
+    /** モデルの置き場(Hugging Face のキャッシュをこの下の hf-cache に置く。空なら D:i-models	ts か既定のキャッシュ) */
+    modelsDir: string
+    /** 読み上げサーバーの URL(既定 http://127.0.0.1:8088。応答していれば起動せずに使う) */
+    baseUrl: string
+    /** 声の説明(キャプション)。参照音声が無いときの声づくりに使う */
+    caption: string
+    /** 参照音声(wav)のパス。指定すると声を真似る */
+    refWav: string
+    /** 合成の seed(同じ声を保つ。空なら毎回変わる) */
+    seed: number | null
+  }
 }
+
+/** 読み上げの声の既定の説明(Irodori-TTS のキャプション。参照音声が無いときに使う)。 */
+export const DEFAULT_TTS_CAPTION = '穏やかで落ち着いた女性の声。本を朗読するように、はっきりと読む'
 
 /** 本のチャットの既定システムプロンプト(backend chat._CHAT_SYSTEM と一致させること)。 */
 export const DEFAULT_CHAT_SYSTEM_PROMPT =
@@ -93,6 +111,14 @@ const DEFAULTS: AppSettings = {
     chatDynamicSuggestions: true,
     chatGeneralKnowledge: true,
     recentModels: []
+  },
+  tts: {
+    serverDir: '',
+    modelsDir: '',
+    baseUrl: 'http://127.0.0.1:8088',
+    caption: DEFAULT_TTS_CAPTION,
+    refWav: '',
+    seed: 1234
   }
 }
 
@@ -109,9 +135,20 @@ function settingsFile(): string {
   return join(dataDir(), 'settings.json')
 }
 
-/** 設定の部分更新パッチ。llm はネストごと部分更新できる。 */
-export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm'>> & {
+/** 設定の部分更新パッチ。llm / tts はネストごと部分更新できる。 */
+export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm' | 'tts'>> & {
   llm?: Partial<AppSettings['llm']>
+  tts?: Partial<AppSettings['tts']>
+}
+
+/** ネストした設定(llm / tts)を、既知の項目だけ既定値に重ねて読む。 */
+function nested<K extends 'llm' | 'tts'>(parsed: Partial<AppSettings>, key: K): AppSettings[K] {
+  const saved = (parsed[key] ?? {}) as Record<string, unknown>
+  const out = { ...DEFAULTS[key] } as Record<string, unknown>
+  for (const k of Object.keys(DEFAULTS[key])) {
+    if (k in saved) out[k] = saved[k]
+  }
+  return out as AppSettings[K]
 }
 
 /** 途中書き込みで壊れないよう、一時ファイルに書いてからリネームで置き換える。 */
@@ -127,11 +164,8 @@ export function getSettings(): AppSettings {
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf-8')) as Partial<AppSettings>
       // 今は使っていない項目(漫画向けの解析の設定など)は読み込み時に落とす(次の保存で消える)。
-      const saved = (parsed.llm ?? {}) as Record<string, unknown>
-      const llm = { ...DEFAULTS.llm }
-      for (const key of Object.keys(DEFAULTS.llm) as (keyof AppSettings['llm'])[]) {
-        if (key in saved) (llm as Record<string, unknown>)[key] = saved[key]
-      }
+      const llm = nested(parsed, 'llm')
+      const tts = nested(parsed, 'tts')
       // 手を加えていない旧既定のままなら、今の既定に置き換える。
       if (LEGACY_CHAT_SYSTEM_PROMPTS.includes(llm.chatSystemPrompt)) {
         llm.chatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT
@@ -139,11 +173,11 @@ export function getSettings(): AppSettings {
       // トップレベルも既知の項目だけを残す(旧 manga-viewer 時代のキーを引きずらない)。
       const top = { ...DEFAULTS }
       for (const key of Object.keys(DEFAULTS) as (keyof AppSettings)[]) {
-        if (key !== 'llm' && key in parsed) {
+        if (key !== 'llm' && key !== 'tts' && key in parsed) {
           ;(top as Record<string, unknown>)[key] = (parsed as Record<string, unknown>)[key]
         }
       }
-      return { ...top, llm }
+      return { ...top, llm, tts }
     } catch {
       // 壊れたファイルは既定値で上書きせず退避し、既定値で動かす(復旧の余地を残す)。
       try {
@@ -168,7 +202,8 @@ export function setSettings(patch: AppSettingsPatch): AppSettings {
   const next: AppSettings = {
     ...current,
     ...patch,
-    llm: { ...current.llm, ...(patch.llm ?? {}) }
+    llm: { ...current.llm, ...(patch.llm ?? {}) },
+    tts: { ...current.tts, ...(patch.tts ?? {}) }
   }
   try {
     writeSettingsFile(settingsFile(), next)

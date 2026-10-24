@@ -10,15 +10,30 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import __version__, embedding, llm_server
-from .routers import chat, dictionary, health, library, llm, pages, queue, roots, structure, text, translate, works
+from . import __version__, embedding, llm_server, tts
+from .routers import (
+    chat,
+    dictionary,
+    health,
+    library,
+    llm,
+    pages,
+    queue,
+    roots,
+    structure,
+    text,
+    translate,
+    tts as tts_router,
+    works,
+)
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     yield
-    # バックエンド終了時に会話用の llama-server を止め、埋め込みモデルも手放す。
+    # バックエンド終了時に会話用の llama-server と読み上げサーバーを止め、埋め込みモデルも手放す。
     llm_server.stop()
+    tts.stop()
     embedding.stop()
 
 
@@ -59,3 +74,4 @@ app.include_router(dictionary.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(llm.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")
+app.include_router(tts_router.router, prefix="/api")

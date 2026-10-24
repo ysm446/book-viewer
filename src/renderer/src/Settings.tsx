@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import {
   downloadLlamaBuild,
+  getTtsStatus,
+  installTts,
   listLatestLlamaReleases,
   listLlamaBuilds,
   listLlmModels,
+  startTts,
+  stopTts,
   type InstalledBuild,
-  type ReleaseBuild
+  type ReleaseBuild,
+  type TtsStatus
 } from './api'
 import type { AppSettings, AppSettingsPatch } from '../../preload'
 
@@ -35,6 +40,9 @@ const DEFAULT_CHAT_SYSTEM_PROMPT =
   '以下の「本の情報」と「本文」をもとに、日本語で簡潔に答えてください。' +
   '本文を根拠にするときは、どのページか(p.○)を添えてください。'
 
+// main/settings.ts の DEFAULT_TTS_CAPTION と一致させること。
+const DEFAULT_TTS_CAPTION = '穏やかで落ち着いた女性の声。本を朗読するように、はっきりと読む'
+
 function ResetIcon(): JSX.Element {
   return (
     <svg
@@ -60,13 +68,14 @@ interface SettingsProps {
   onClose: () => void
 }
 
-type SettingsTab = 'display' | 'runtime' | 'ai' | 'chat'
+type SettingsTab = 'display' | 'runtime' | 'ai' | 'chat' | 'speech'
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'display', label: '表示' },
   { id: 'runtime', label: 'ランタイム' },
   { id: 'ai', label: '文字起こし' },
-  { id: 'chat', label: 'チャット' }
+  { id: 'chat', label: 'チャット' },
+  { id: 'speech', label: '読み上げ' }
 ]
 
 export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.Element {
@@ -116,6 +125,65 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
       clearTimeout(timer)
     }
   }, [modelsDir])
+
+  // ---- 読み上げ(Irodori-TTS) ----
+  const [tts, setTts] = useState<TtsStatus | null>(null)
+  const [ttsBusy, setTtsBusy] = useState(false)
+  const [ttsError, setTtsError] = useState<string | null>(null)
+  const ttsOpts = {
+    serverDir: settings.tts.serverDir,
+    modelsDir: settings.tts.modelsDir,
+    baseUrl: settings.tts.baseUrl
+  }
+  const ttsKey = `${ttsOpts.serverDir}\n${ttsOpts.modelsDir}\n${ttsOpts.baseUrl}`
+  // タブを開いている間、状態を追う(インストール・起動の進み具合を見せる)。
+  useEffect(() => {
+    if (tab !== 'speech') return
+    let alive = true
+    let timer = 0
+    const tick = async (): Promise<void> => {
+      try {
+        const st = await getTtsStatus(ttsOpts)
+        if (alive) setTts(st)
+      } catch {
+        // 一時的な失敗は次の周期で取り直す
+      }
+      if (alive) timer = window.setTimeout(() => void tick(), 2000)
+    }
+    timer = window.setTimeout(() => void tick(), 300)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, ttsKey])
+
+  async function ttsAction(run: () => Promise<TtsStatus>): Promise<void> {
+    setTtsBusy(true)
+    setTtsError(null)
+    try {
+      setTts(await run())
+    } catch (e) {
+      setTtsError((e as Error).message)
+    } finally {
+      setTtsBusy(false)
+    }
+  }
+
+  const ttsInstalling = tts?.install?.phase === 'step'
+  const ttsStateLabel = !tts
+    ? '確認中…'
+    : ttsInstalling
+      ? 'インストール中…'
+      : tts.running
+        ? tts.external
+          ? '稼働中（別のアプリが起動したサーバー）'
+          : '稼働中'
+        : tts.starting
+          ? '起動中…（モデルの読み込み。初回はモデルの取得で数分かかります）'
+          : tts.installed
+            ? '停止中'
+            : '未インストール'
 
   async function checkLatest(): Promise<void> {
     setBuildBusy('checking')
@@ -625,6 +693,255 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                 />
                 <span className="switch-track" />
               </label>
+            </div>
+          </section>
+              </>
+            )}
+
+            {tab === 'speech' && (
+              <>
+          <section className="settings-section">
+            <h3 className="settings-section-title">読み上げ（Irodori-TTS）</h3>
+            <span className="settings-desc">
+              テキスト表示の本文を、ローカルの音声モデル Irodori-TTS（Aratako、MIT。日本語専用）で読み上げます。
+              公式の OpenAI 互換サーバー Irodori-TTS-Server を別の Python 環境（uv）に入れ、読み上げのときに起動します。
+              英語の本は訳文（日本語）を読みます
+            </span>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                サーバー
+                <span className="settings-desc">
+                  {ttsStateLabel}
+                  {tts?.running && tts.checkpoint ? ` ・ ${tts.checkpoint}` : ''}
+                </span>
+                {tts?.install && (
+                  <span className={tts.install.phase === 'error' ? 'reader-info-error' : 'settings-desc'}>
+                    {tts.install.error ?? tts.install.label}
+                  </span>
+                )}
+                {ttsInstalling && tts?.install && tts.install.lines.length > 0 && (
+                  <pre className="tts-log">{tts.install.lines.join('\n')}</pre>
+                )}
+                {(ttsError || tts?.error) && (
+                  <span className="reader-info-error">{ttsError ?? tts?.error}</span>
+                )}
+              </div>
+              <div className="settings-llm-url">
+                {tts && !tts.installed && (
+                  <button
+                    className="btn btn-primary"
+                    disabled={ttsBusy || ttsInstalling}
+                    onClick={() => void ttsAction(() => installTts(ttsOpts))}
+                    title="Irodori-TTS-Server を git clone し、uv で依存（torch を含む。約 5 GB）を入れます。数分かかります"
+                  >
+                    インストール
+                  </button>
+                )}
+                {tts?.installed && !tts.running && !tts.starting && (
+                  <button
+                    className="btn"
+                    disabled={ttsBusy || ttsInstalling}
+                    onClick={() => void ttsAction(() => startTts(ttsOpts))}
+                    title="読み上げサーバーを起動してモデルを読み込みます（読み上げボタンからも自動で起動します）"
+                  >
+                    起動
+                  </button>
+                )}
+                {tts && (tts.starting || (tts.running && !tts.external)) && (
+                  <button
+                    className="btn"
+                    disabled={ttsBusy}
+                    onClick={() => void ttsAction(stopTts)}
+                    title="読み上げサーバーを止めて VRAM を空けます"
+                  >
+                    停止
+                  </button>
+                )}
+                {tts?.installed && !tts.running && !tts.starting && (
+                  <button
+                    className="btn"
+                    disabled={ttsBusy || ttsInstalling}
+                    onClick={() => {
+                      if (window.confirm('Irodori-TTS-Server を削除して入れ直します（数分かかります）。よろしいですか？')) {
+                        void ttsAction(() => installTts(ttsOpts))
+                      }
+                    }}
+                    title="サーバーを削除して最新を入れ直します"
+                  >
+                    入れ直す…
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                サーバーのフォルダ
+                <span className="settings-desc">
+                  Irodori-TTS-Server を置く（置いてある）フォルダ。空なら vendor/irodori-tts-server。
+                  ほかのアプリで入れたフォルダを指すと、入れ直さずに使えます
+                </span>
+              </div>
+              <div className="settings-llm-url">
+                <input
+                  className="tag-input settings-text"
+                  placeholder={tts ? `(既定: ${tts.server_dir_default})` : '(既定: vendor/irodori-tts-server)'}
+                  value={settings.tts.serverDir}
+                  onChange={(e) => onChange({ tts: { serverDir: e.target.value } })}
+                />
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const d = await window.api.selectFolder()
+                    if (d) onChange({ tts: { serverDir: d } })
+                  }}
+                >
+                  参照
+                </button>
+                {settings.tts.serverDir !== '' && (
+                  <button
+                    className="icon-btn"
+                    title="既定（vendor/irodori-tts-server）に戻す"
+                    onClick={() => onChange({ tts: { serverDir: '' } })}
+                  >
+                    <ResetIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                モデルの置き場
+                <span className="settings-desc">
+                  音声モデル（約 3.4 GB。初回の起動で Hugging Face から取得）を、この下の hf-cache に置きます。
+                  空なら D:\ai-models\tts があればそれ、無ければ Hugging Face の既定のキャッシュ
+                </span>
+              </div>
+              <div className="settings-llm-url">
+                <input
+                  className="tag-input settings-text"
+                  placeholder={tts?.models_dir ? `(既定: ${tts.models_dir})` : '(既定: Hugging Face のキャッシュ)'}
+                  value={settings.tts.modelsDir}
+                  onChange={(e) => onChange({ tts: { modelsDir: e.target.value } })}
+                />
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const d = await window.api.selectFolder()
+                    if (d) onChange({ tts: { modelsDir: d } })
+                  }}
+                >
+                  参照
+                </button>
+                {settings.tts.modelsDir !== '' && (
+                  <button
+                    className="icon-btn"
+                    title="既定に戻す"
+                    onClick={() => onChange({ tts: { modelsDir: '' } })}
+                  >
+                    <ResetIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                サーバーの URL
+                <span className="settings-desc">
+                  この URL が応答していれば（別のアプリが起動していれば）起動せずにそれを使います
+                </span>
+              </div>
+              <input
+                className="tag-input settings-text"
+                placeholder="http://127.0.0.1:8088"
+                value={settings.tts.baseUrl}
+                onChange={(e) => onChange({ tts: { baseUrl: e.target.value } })}
+              />
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <h3 className="settings-section-title">声</h3>
+
+            <div className="settings-row settings-row-col">
+              <div className="syslabel-row">
+                <span className="settings-label-text">声の説明</span>
+                <button
+                  className="icon-btn syslabel-reset"
+                  title="既定に戻す"
+                  onClick={() => onChange({ tts: { caption: DEFAULT_TTS_CAPTION } })}
+                >
+                  <ResetIcon />
+                </button>
+              </div>
+              <span className="settings-desc">
+                声の性別・年齢・話し方を日本語で書くと、その声で読みます（参照音声が無いときの声づくり）。
+                変えると、同じ本文でも音声を作り直します
+              </span>
+              <textarea
+                className="system-prompt"
+                rows={2}
+                value={settings.tts.caption}
+                onChange={(e) => onChange({ tts: { caption: e.target.value } })}
+              />
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                参照音声
+                <span className="settings-desc">
+                  真似させたい声の wav（きれいな発話を合わせて 30 秒ほど。最大 120 秒）。空なら上の説明だけで声を作ります
+                </span>
+              </div>
+              <div className="settings-llm-url">
+                <input
+                  className="tag-input settings-text"
+                  placeholder="(なし)"
+                  value={settings.tts.refWav}
+                  onChange={(e) => onChange({ tts: { refWav: e.target.value } })}
+                />
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const f = await window.api.selectFile()
+                    if (f) onChange({ tts: { refWav: f } })
+                  }}
+                >
+                  参照
+                </button>
+                {settings.tts.refWav !== '' && (
+                  <button
+                    className="icon-btn"
+                    title="参照音声を外す"
+                    onClick={() => onChange({ tts: { refWav: '' } })}
+                  >
+                    <ResetIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                seed
+                <span className="settings-desc">
+                  合成の乱数の種。決めておくと声や読み方が本文ごとにぶれにくくなります。空なら毎回変わります
+                </span>
+              </div>
+              <input
+                className="tag-input settings-text tts-seed"
+                type="number"
+                min={0}
+                step={1}
+                placeholder="(毎回変わる)"
+                value={settings.tts.seed ?? ''}
+                onChange={(e) =>
+                  onChange({ tts: { seed: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value))) } })
+                }
+              />
             </div>
           </section>
               </>

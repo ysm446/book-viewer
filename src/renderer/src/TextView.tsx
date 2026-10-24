@@ -19,9 +19,12 @@ import {
   getPageText,
   getTranslation,
   getTranslationLive,
+  getTtsStatus,
   lookupWord,
   pageUrl,
   savePageText,
+  startTts,
+  ttsSpeak,
   type BookContent,
   type BookTranslation,
   type ContentBlock,
@@ -36,6 +39,7 @@ import {
 import { fmtElapsed } from './format'
 import { Markdown } from './Markdown'
 import { textFontOf, type TextFont } from './textFonts'
+import type { AppSettings } from '../../preload'
 
 interface Props {
   root: string
@@ -73,6 +77,8 @@ interface Props {
   dictionary: boolean
   /** 検索結果から開いた箇所。その段落へ移動し、語をハイライトする */
   jump: TextJump | null
+  /** 音声読み上げ(Irodori-TTS)のサーバーと声の設定 */
+  tts: AppSettings['tts']
 }
 
 /** 検索結果から開いた箇所。block はアプリ用の本文のブロックの添字、seq は開くたびに変わる通し番号。 */
@@ -308,6 +314,98 @@ function jaText(t: TranslatedBlock): string {
   return t.head + t.pairs.map((p) => p.ja).join('')
 }
 
+// ---- 読み上げ ----
+
+type SpeechPhase = 'idle' | 'starting' | 'loading' | 'playing' | 'paused'
+
+interface SpeechState {
+  phase: SpeechPhase
+  /** 読んでいる(合成している)ブロック */
+  block: number | null
+}
+
+const SPEECH_LABELS: Record<Exclude<SpeechPhase, 'idle'>, string> = {
+  starting: '読み上げの準備中…（モデルの読み込み）',
+  loading: '合成中…',
+  playing: '読み上げ中',
+  paused: '一時停止'
+}
+
+/** 読み上げの進み(state にしない。音声の終わりや組み直しのたびに参照する)。 */
+interface SpeechRun {
+  active: boolean
+  /** 合成を待っている(二重に進めない) */
+  busy: boolean
+  paused: boolean
+  /** 次に読むブロックと、その中の何番目の区切りか */
+  next: number
+  part: number
+  /** 止めるたびに進める。止めたあとに届いた音声を鳴らさないため */
+  gen: number
+  audio: HTMLAudioElement | null
+  playing: { block: number; part: number } | null
+  /** 合成した(している)音声。`block:part` → Blob */
+  cache: Map<string, Promise<Blob>>
+}
+
+const SPEECH_RATES = [0.8, 1, 1.2, 1.5, 2]
+const SPEECH_RATE_STORE = 'readerSpeechRate'
+/** 読んでいるブロックのハイライト(CSS Custom Highlight API)。 */
+const SPEECH_HIGHLIGHT = 'speaking'
+/** 一度に合成する本文の長さの上限(字)。長い段落は文の切れ目で分ける。 */
+const SPEECH_MAX = 1500
+
+/** 読み上げる種類のブロック(図・表・コードは読まない)。 */
+const SPEECH_KINDS = new Set(['p', 'heading', 'list', 'quote'])
+
+/** ブロックの Markdown を読み上げる本文にする。ルビは読み(rt)を読む。読むものが無ければ空。 */
+function speechText(kind: string, md: string): string {
+  if (!SPEECH_KINDS.has(kind)) return ''
+  const lines = md
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((l) =>
+      l
+        .replace(/^\s*#{1,6}\s+/, '')
+        .replace(/^\s*>\s?/, '')
+        .replace(/^\s*([-*+]|\d+[.)])\s+/, '')
+        .trim()
+    )
+    .filter((l) => l && !/^(-{3,}|\*{3,})$/.test(l) && !/^\[図[:：]/.test(l) && !/^!\[/.test(l))
+  return lines
+    .join('\n')
+    .replace(/<ruby>([^<\n]+)<rt>([^<\n]*)<\/rt><\/ruby>/g, (_, base: string, rt: string) => rt || base)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, '$1')
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .trim()
+}
+
+/** 長い本文を、文の切れ目(。！？ や改行)で SPEECH_MAX 字以下のまとまりに分ける。 */
+function splitSpeech(text: string): string[] {
+  if (!text) return []
+  if (text.length <= SPEECH_MAX) return [text]
+  const out: string[] = []
+  let buf = ''
+  for (const sentence of text.split(/(?<=[。！？!?\n])/)) {
+    if (buf && buf.length + sentence.length > SPEECH_MAX) {
+      out.push(buf.trim())
+      buf = ''
+    }
+    buf += sentence
+    // 切れ目の無い長い文はそのまま切る
+    while (buf.length > SPEECH_MAX) {
+      out.push(buf.slice(0, SPEECH_MAX))
+      buf = buf.slice(SPEECH_MAX)
+    }
+  }
+  if (buf.trim()) out.push(buf.trim())
+  return out
+}
+
 /** 1 画面の大きさと段の数。 */
 interface Geometry {
   width: number
@@ -355,7 +453,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     trStyleName,
     llmReady,
     dictionary,
-    jump
+    jump,
+    tts
   },
   ref
 ): JSX.Element {
@@ -648,6 +747,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   jumpRef.current = jump
   const handledJump = useRef<number | null>(null)
   const [searchTerms, setSearchTerms] = useState<string[] | null>(null)
+  // 読み上げを止める(手でページを移ったとき。読み上げの実装は下の「読み上げ」の節)。
+  const stopSpeechRef = useRef<() => void>(() => {})
 
   const showStage = !editing
   useEffect(() => {
@@ -736,6 +837,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useEffect(() => {
     if (!blocks || blocks.length === 0 || page === reported.current.page) return
     reported.current = { ...reported.current, page }
+    stopSpeechRef.current()
     setSearchTerms(null)
     jumpToBlock(blockOfPage(blocks, page))
   }, [page, blocks, jumpToBlock])
@@ -748,6 +850,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     }
     if (!blocks || blocks.length === 0 || handledJump.current === jump.seq) return
     handledJump.current = jump.seq
+    stopSpeechRef.current()
     setSearchTerms(jump.terms)
     jumpToBlock(blockOfJump(blocks, jump))
   }, [jump, blocks, jumpToBlock])
@@ -1009,14 +1112,17 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     return () => window.removeEventListener('keydown', onKey, true)
   }, [popupOpen, closeDict])
 
-  // 英語の本の訳文を出しているとき、段落を右クリックすると、その段落・この画面だけを訳すメニューを出す。
+  // 段落を右クリックすると「ここから読み上げる」と、英語の本で訳文を出しているときは
+  // その段落・この画面だけを訳すメニューを出す。
+  const canTranslateMenu = isEnglish && translation !== 'off' && !!tr
   function onFlowContextMenu(e: React.MouseEvent): void {
-    if (!isEnglish || translation === 'off' || !blocks) return
+    if (!blocks) return
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-b]')
     const stage = stageRef.current
     if (!el || !stage) return
     const index = Number(el.dataset.b)
-    if (!isTranslatableBlock(blocks[index])) return
+    const canTranslate = canTranslateMenu && isTranslatableBlock(blocks[index])
+    if (!canTranslate && !(speechAvailable && SPEECH_KINDS.has(blocks[index]?.kind ?? ''))) return
     e.preventDefault()
     closeDict()
     const box = stage.getBoundingClientRect()
@@ -1040,10 +1146,279 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   }
   useEffect(() => () => window.clearTimeout(dictTimer.current), [])
 
+  // ---- 読み上げ(Irodori-TTS) ----
+  //
+  // 今の画面(または右クリックした段落)から、ブロックを順に音声にして再生する。音声はブロックごとに
+  // バックエンドへ頼み(長いブロックは文の切れ目で分ける)、2 つ先まで先に合成しておく。読んでいるブロックは
+  // ハイライトし、画面の外に出たら読み上げの側で画面を送る(手でページを送ったら止める)。
+  // Irodori-TTS は日本語専用なので、英語の本は訳文(日本語)を読む(訳していない段落は飛ばす)。
+
+  const speechAvailable = !isEnglish || translation !== 'off'
+  const [speech, setSpeech] = useState<SpeechState>({ phase: 'idle', block: null })
+  const [speechRate, setSpeechRate] = useState(() => {
+    const v = Number(localStorage.getItem(SPEECH_RATE_STORE))
+    return SPEECH_RATES.includes(v) ? v : 1
+  })
+  const speechRateRef = useRef(speechRate)
+  speechRateRef.current = speechRate
+  const sp = useRef<SpeechRun>({
+    active: false,
+    busy: false,
+    paused: false,
+    next: 0,
+    part: 0,
+    gen: 0,
+    audio: null,
+    playing: null,
+    cache: new Map()
+  })
+  const blocksRef = useRef(blocks)
+  blocksRef.current = blocks
+  const trBlocksRef = useRef(trBlocks)
+  trBlocksRef.current = trBlocks
+  const ttsRef = useRef(tts)
+  ttsRef.current = tts
+
+  /** ブロック i の読み上げる本文(分けたまとまり)。読むものが無ければ空。 */
+  const speechParts = useCallback(
+    (i: number): string[] => {
+      const b = blocksRef.current?.[i]
+      if (!b) return []
+      if (isEnglish) {
+        const t = trBlocksRef.current?.[i]
+        return t ? splitSpeech(speechText(b.kind, jaText(t))) : []
+      }
+      return splitSpeech(speechText(b.kind, b.md))
+    },
+    [isEnglish]
+  )
+
+  const stopSpeech = useCallback((): void => {
+    const s = sp.current
+    s.active = false
+    s.busy = false
+    s.paused = false
+    s.gen++
+    if (s.audio) {
+      s.audio.onended = null
+      s.audio.onerror = null
+      s.audio.pause()
+      s.audio = null
+    }
+    s.playing = null
+    s.cache.clear()
+    setSpeech({ phase: 'idle', block: null })
+  }, [])
+  stopSpeechRef.current = stopSpeech
+  useEffect(() => () => stopSpeechRef.current(), [])
+  // 本文が作り直されたら(添字がずれるので)止める。
+  useEffect(() => {
+    stopSpeechRef.current()
+  }, [blocks])
+
+  const failSpeech = useCallback(
+    (e: unknown): void => {
+      stopSpeech()
+      setError(`読み上げ: ${(e as Error).message}`)
+    },
+    [stopSpeech]
+  )
+
+  /** ブロック i の part 番目のまとまりの音声(合成中なら同じ約束を返す)。 */
+  const fetchUnit = useCallback(
+    (i: number, part: number): Promise<Blob> => {
+      const s = sp.current
+      const key = `${i}:${part}`
+      let p = s.cache.get(key)
+      if (!p) {
+        const v = ttsRef.current
+        p = ttsSpeak(v.baseUrl, speechParts(i)[part], { caption: v.caption, refWav: v.refWav, seed: v.seed })
+        p.catch(() => s.cache.delete(key)) // 失敗は覚えない(次は頼み直す)
+        s.cache.set(key, p)
+      }
+      return p
+    },
+    [speechParts]
+  )
+
+  /** (block, part) 以降で最初に読むものがある単位。本の終わりなら null。 */
+  const nextUnit = useCallback(
+    (block: number, part: number): { block: number; part: number } | null => {
+      const bl = blocksRef.current
+      if (!bl) return null
+      for (let b = block, p = part; b < bl.length; b++, p = 0) {
+        if (p < speechParts(b).length) return { block: b, part: p }
+      }
+      return null
+    },
+    [speechParts]
+  )
+
+  /** 次の単位を合成して鳴らす。画面の外なら先に画面を送る(別の区画なら組み上がってから続ける)。 */
+  const pump = useCallback(async (): Promise<void> => {
+    const s = sp.current
+    if (!s.active || s.busy || s.playing) return
+    const unit = nextUnit(s.next, s.part)
+    if (!unit) {
+      stopSpeech()
+      return
+    }
+    s.next = unit.block
+    s.part = unit.part
+    const l = layout.current
+    const secIdx = sections.findIndex((x) => unit.block >= x.start && unit.block < x.end)
+    if (!l || secIdx < 0) return
+    if (l.sec !== secIdx) {
+      pending.current = { block: unit.block }
+      setSec(secIdx)
+      setTick((t) => t + 1)
+      return
+    }
+    const st = l.starts[unit.block - sections[secIdx].start]
+    if (st === undefined) return
+    if (st !== screenRef.current) {
+      screenRef.current = st
+      setScreen(st)
+      settle(st)
+      fade()
+    }
+    s.busy = true
+    const gen = s.gen
+    setSpeech({ phase: 'loading', block: unit.block })
+    // 2 つ先まで先に合成しておく(合成は再生より速いので途切れない)
+    let ahead: { block: number; part: number } | null = unit
+    for (let k = 0; k < 2 && ahead; k++) {
+      ahead = nextUnit(ahead.block, ahead.part + 1)
+      if (ahead) fetchUnit(ahead.block, ahead.part).catch(() => {})
+    }
+    let blob: Blob
+    try {
+      blob = await fetchUnit(unit.block, unit.part)
+    } catch (e) {
+      if (s.gen === gen) failSpeech(e)
+      return
+    }
+    if (!s.active || s.gen !== gen) return
+    s.busy = false
+    const url = URL.createObjectURL(blob)
+    const a = new Audio(url)
+    a.preservesPitch = true
+    a.playbackRate = speechRateRef.current
+    s.audio = a
+    s.playing = unit
+    a.onended = () => {
+      URL.revokeObjectURL(url)
+      if (s.audio !== a) return
+      s.audio = null
+      s.playing = null
+      s.part = unit.part + 1
+      void pump()
+    }
+    a.onerror = () => {
+      URL.revokeObjectURL(url)
+      if (s.gen === gen) failSpeech(new Error('音声を再生できません'))
+    }
+    if (s.paused) {
+      setSpeech({ phase: 'paused', block: unit.block })
+      return
+    }
+    setSpeech({ phase: 'playing', block: unit.block })
+    a.play().catch((e) => {
+      if (s.gen === gen) failSpeech(e)
+    })
+  }, [nextUnit, fetchUnit, sections, settle, fade, stopSpeech, failSpeech])
+
+  // 区画の組み直し・画面の移動が済んだら、読み上げの続きへ進む。
+  useEffect(() => {
+    if (sp.current.active) void pump()
+  }, [screen, sec, tick, pump])
+
+  /** ブロック from から読み上げる。サーバーが止まっていれば起動して(モデルの読み込みを)待つ。 */
+  const startSpeech = useCallback(
+    async (from: number): Promise<void> => {
+      stopSpeech()
+      const s = sp.current
+      s.active = true
+      s.next = from
+      s.part = 0
+      const gen = s.gen
+      setError(null)
+      setSpeech({ phase: 'starting', block: null })
+      try {
+        const v = ttsRef.current
+        const opts = { serverDir: v.serverDir, modelsDir: v.modelsDir, baseUrl: v.baseUrl }
+        let st = await getTtsStatus(opts)
+        if (!st.running) {
+          if (!st.installed) {
+            throw new Error(
+              '読み上げサーバー（Irodori-TTS-Server）が入っていません。設定 →「読み上げ」からインストールしてください'
+            )
+          }
+          if (!st.starting) st = await startTts(opts)
+          while (!st.running) {
+            await new Promise((r) => setTimeout(r, 1500))
+            if (!s.active || s.gen !== gen) return
+            st = await getTtsStatus(opts)
+            if (st.error) throw new Error(st.error)
+            if (!st.running && !st.starting) throw new Error('読み上げサーバーが起動しませんでした')
+          }
+        }
+      } catch (e) {
+        if (s.gen === gen) failSpeech(e)
+        return
+      }
+      if (!s.active || s.gen !== gen) return
+      void pump()
+    },
+    [stopSpeech, pump, failSpeech]
+  )
+
+  function pauseSpeech(): void {
+    const s = sp.current
+    s.paused = true
+    s.audio?.pause()
+    setSpeech((v) => ({ ...v, phase: 'paused' }))
+  }
+
+  function resumeSpeech(): void {
+    const s = sp.current
+    s.paused = false
+    if (s.audio) {
+      void s.audio.play()
+      setSpeech((v) => ({ ...v, phase: 'playing' }))
+    } else {
+      setSpeech((v) => ({ ...v, phase: 'loading' }))
+      void pump()
+    }
+  }
+
+  // 速さは再生側で変える(音の高さは保たれる)。次回も同じ速さにする。
+  useEffect(() => {
+    if (sp.current.audio) sp.current.audio.playbackRate = speechRate
+    localStorage.setItem(SPEECH_RATE_STORE, String(speechRate))
+  }, [speechRate])
+
+  // 読んでいるブロックをハイライトする(組み直しても付け直す)。
+  const speakingBlock = speech.block
+  useEffect(() => {
+    const flow = flowRef.current
+    if (speakingBlock === null || !flow || typeof Highlight === 'undefined') return
+    const el = flow.querySelector(`[data-b="${speakingBlock}"]`)
+    if (!el) return
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    CSS.highlights.set(SPEECH_HIGHLIGHT, new Highlight(r))
+    return () => {
+      CSS.highlights.delete(SPEECH_HIGHLIGHT)
+    }
+  }, [speakingBlock, body, showStage, screen])
+
   const turn = useCallback(
     (dir: 'next' | 'prev'): void => {
       const l = layout.current
       if (!l) return
+      // 手でページを送ったら読み上げは止める(読み上げの側で送るときはここを通らない)
+      if (sp.current.active) stopSpeech()
       const scr = screenRef.current + (dir === 'next' ? 1 : -1)
       if (scr >= 0 && scr < l.screens) {
         screenRef.current = scr
@@ -1059,7 +1434,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       setSec(nextSec)
       fade()
     },
-    [sections.length, settle, fade]
+    [sections.length, settle, fade, stopSpeech]
   )
   useImperativeHandle(ref, () => ({ turn }), [turn])
 
@@ -1246,6 +1621,56 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
           </>
         )}
         <span className="text-toolbar-spacer" />
+        {!editing && speechAvailable && (
+          <>
+            {speech.phase === 'idle' ? (
+              <button
+                className="btn"
+                onClick={() => {
+                  const on = blocksOnScreen()
+                  void startSpeech(on[0] ?? anchor.current ?? 0)
+                }}
+                disabled={!blocks || blocks.length === 0}
+                title={
+                  isEnglish
+                    ? '今の画面の訳文（日本語）を Irodori-TTS で読み上げます（訳していない段落は飛ばします）。段落を右クリックすると、その段落から読み上げられます'
+                    : '今の画面の先頭から Irodori-TTS で読み上げます。段落を右クリックすると、その段落から読み上げられます'
+                }
+              >
+                読み上げ
+              </button>
+            ) : (
+              <>
+                <span className="text-toolbar-note">{SPEECH_LABELS[speech.phase]}</span>
+                {speech.phase === 'paused' ? (
+                  <button className="btn" onClick={resumeSpeech}>
+                    再開
+                  </button>
+                ) : (
+                  <button className="btn" onClick={pauseSpeech} disabled={speech.phase === 'starting'}>
+                    一時停止
+                  </button>
+                )}
+                <button className="btn" onClick={stopSpeech}>
+                  停止
+                </button>
+              </>
+            )}
+            <select
+              className="reader-dir"
+              value={speechRate}
+              onChange={(e) => setSpeechRate(Number(e.target.value))}
+              title="読み上げの速さ"
+              aria-label="読み上げの速さ"
+            >
+              {SPEECH_RATES.map((r) => (
+                <option key={r} value={r}>
+                  速さ {r.toFixed(1)}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         {!editing && (
           <>
             <span className="text-toolbar-note">原本 p.{page + 1}</span>
@@ -1407,16 +1832,40 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   aria-label={vertical ? '前へ' : '次へ'}
                   onClick={() => turn(vertical ? 'prev' : 'next')}
                 />
-                {blockMenu && tr && (
+                {blockMenu && (
                   <>
                     <div className="popup-backdrop" onClick={() => setBlockMenu(null)} />
                     <div
                       className="ex-popup block-menu"
                       role="menu"
-                      aria-label="段落の翻訳"
+                      aria-label="段落の操作"
                       style={{ left: blockMenu.x, top: blockMenu.y, width: BLOCK_MENU_WIDTH }}
                     >
-                      {(() => {
+                      {speechAvailable && (
+                        <button
+                          className="ex-popup-item"
+                          role="menuitem"
+                          disabled={speechParts(blockMenu.block).length === 0}
+                          title={
+                            speechParts(blockMenu.block).length === 0
+                              ? isEnglish
+                                ? '訳した段落だけ読み上げられます（Irodori-TTS は日本語専用）'
+                                : 'この段落には読み上げる本文がありません'
+                              : 'この段落から順に読み上げます'
+                          }
+                          onClick={() => {
+                            const b = blockMenu.block
+                            setBlockMenu(null)
+                            void startSpeech(b)
+                          }}
+                        >
+                          ここから読み上げる
+                        </button>
+                      )}
+                      {canTranslateMenu &&
+                        tr &&
+                        isTranslatableBlock(blocks?.[blockMenu.block]) &&
+                        (() => {
                         const why = !llmReady
                           ? 'モデルを読み込むと訳せます'
                           : trJob
@@ -1425,6 +1874,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         const translated = !!tr.blocks[blockMenu.block]
                         return (
                           <>
+                            {speechAvailable && <div className="ex-popup-sep" />}
                             <button
                               className="ex-popup-item"
                               role="menuitem"

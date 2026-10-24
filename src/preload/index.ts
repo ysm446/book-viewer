@@ -31,6 +31,14 @@ export interface AppSettings {
     chatGeneralKnowledge: boolean
     recentModels: string[]
   }
+  tts: {
+    serverDir: string
+    modelsDir: string
+    baseUrl: string
+    caption: string
+    refWav: string
+    seed: number | null
+  }
 }
 
 /** バックエンドの接続先と API の合言葉。 */
@@ -51,9 +59,10 @@ export interface SavePageInput {
 /** main が横取りしたキー(F9 / F12 / Shift+F12)の通知名。 */
 export type ShortcutName = 'save-pages' | 'capture-window' | 'capture-window-logical'
 
-/** 設定の部分更新パッチ。llm はネストごと部分更新できる(main 側で深いマージ)。 */
-export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm'>> & {
+/** 設定の部分更新パッチ。llm / tts はネストごと部分更新できる(main 側で深いマージ)。 */
+export type AppSettingsPatch = Partial<Omit<AppSettings, 'llm' | 'tts'>> & {
   llm?: Partial<AppSettings['llm']>
+  tts?: Partial<AppSettings['tts']>
 }
 
 /** レンダラへ公開する安全な API。 */

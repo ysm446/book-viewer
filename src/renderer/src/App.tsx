@@ -496,10 +496,15 @@ export function App(): JSX.Element {
   function changeSettings(patch: AppSettingsPatch): void {
     // 入力が即時反映されるようローカルを先に更新し、保存は背後で行う
     // (毎キーストロークの IPC 往復による IME のカーソル飛びを防ぐ)。
-    // llm は部分パッチを許すため深いマージにする(main 側の保存も同様)。
+    // llm / tts は部分パッチを許すため深いマージにする(main 側の保存も同様)。
     setSettings((prev) =>
       prev
-        ? { ...prev, ...patch, llm: patch.llm ? { ...prev.llm, ...patch.llm } : prev.llm }
+        ? {
+            ...prev,
+            ...patch,
+            llm: patch.llm ? { ...prev.llm, ...patch.llm } : prev.llm,
+            tts: patch.tts ? { ...prev.tts, ...patch.tts } : prev.tts
+          }
         : prev
     )
     void window.api.setSettings(patch)

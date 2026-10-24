@@ -1654,6 +1654,10 @@ input[type='checkbox']:focus-visible {
   color: var(--text);
   text-decoration: underline 2px var(--border-strong);
 }
+/* 読み上げているブロック(Irodori-TTS)。「今モデルが読んでいる」位置なので、モデルの状態と同じ青の淡い面。 */
+::highlight(speaking) {
+  background-color: var(--accent-soft);
+}
 .dict-popup {
   right: auto;
   max-height: 50%;
@@ -2352,6 +2356,22 @@ input[type='checkbox']:focus-visible {
   font-size: 12px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+/* 設定: 読み上げ。インストールの出力(直近の数行)と seed の入力 */
+.tts-log {
+  margin: 4px 0 0;
+  max-height: 96px;
+  overflow: hidden;
+  font-family: ui-monospace, 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tts-seed {
+  width: 140px;
 }
 
 /* 設定: LLM 入力 */
