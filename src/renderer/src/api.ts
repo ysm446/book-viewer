@@ -327,6 +327,73 @@ export async function deleteBookmark(
   )
 }
 
+export type HighlightColor = 'yellow' | 'green' | 'pink'
+
+/**
+ * ハイライトの段落(アプリ用の本文のブロック)ごとの範囲。start / end はブロックの描画した本文の文字の位置
+ * (ルビの読みと訳文を除く)。key はブロックの Markdown の指紋、block / page は作ったときの添字と原本のページ。
+ */
+export interface HighlightPart {
+  key: string
+  block: number
+  page: number
+  start: number
+  end: number
+  text: string
+  prefix: string
+  suffix: string
+}
+
+export interface Highlight {
+  id: number
+  color: HighlightColor
+  note: string | null
+  /** 選んだ文字列(段落をまたぐときは改行でつなぐ) */
+  text: string
+  created_at: string
+  updated_at: string
+  parts: HighlightPart[]
+}
+
+export async function listHighlights(root: string, workId: string): Promise<Highlight[]> {
+  const data = await jsonFetch<{ highlights: Highlight[] }>(
+    `/works/${workId}/highlights?root=${encodeURIComponent(root)}`
+  )
+  return data.highlights
+}
+
+export async function addHighlight(
+  root: string,
+  workId: string,
+  body: { color: HighlightColor; note: string | null; text: string; parts: HighlightPart[] }
+): Promise<Highlight> {
+  const data = await jsonFetch<{ highlight: Highlight }>(
+    `/works/${workId}/highlights?root=${encodeURIComponent(root)}`,
+    { method: 'POST', body: JSON.stringify(body) }
+  )
+  return data.highlight
+}
+
+/** 色・メモを変える(渡した項目だけ。メモを消すときは note: null)。 */
+export async function updateHighlight(
+  root: string,
+  workId: string,
+  highlightId: number,
+  changes: { color?: HighlightColor; note?: string | null }
+): Promise<Highlight> {
+  const data = await jsonFetch<{ highlight: Highlight }>(
+    `/works/${workId}/highlights/${highlightId}?root=${encodeURIComponent(root)}`,
+    { method: 'PATCH', body: JSON.stringify(changes) }
+  )
+  return data.highlight
+}
+
+export async function deleteHighlight(root: string, workId: string, highlightId: number): Promise<void> {
+  await jsonFetch(`/works/${workId}/highlights/${highlightId}?root=${encodeURIComponent(root)}`, {
+    method: 'DELETE'
+  })
+}
+
 /** ページ画像の URL。<img src> に直接渡す。 */
 export function pageUrl(root: string, workId: string, index: number): string {
   return imageUrl(`/works/${workId}/pages/${index}?root=${encodeURIComponent(root)}`)

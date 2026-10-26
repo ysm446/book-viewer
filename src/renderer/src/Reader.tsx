@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   addBookmark,
+  addHighlight,
   addWorkTag,
   deleteBookmark,
+  deleteHighlight,
   listBookmarks,
+  listHighlights,
+  updateHighlight,
   pageUrl,
   removeWorkTag,
   saveReadingState,
@@ -15,15 +19,20 @@ import {
   type BookLanguage,
   type Bookmark,
   type Direction,
+  type Highlight,
+  type HighlightColor,
+  type HighlightPart,
   type SpreadOffset,
   type TranslationStyle,
   type Work,
   type WritingMode
 } from './api'
+import { HighlightPanel } from './HighlightPanel'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
 import {
   TextView,
+  type HighlightPlace,
   type PairUnit,
   type TextJump,
   type TextTheme,
@@ -404,6 +413,8 @@ export function Reader({
   const [showTags, setShowTags] = useStoredFlag('readerShowTags', false)
   // 表示設定バー(読み方向・見開きずらし・本文の組み方など)の開閉。
   const [showDisplay, setShowDisplay] = useStoredFlag('readerShowDisplay', false)
+  // ハイライト一覧の開閉。
+  const [showHighlights, setShowHighlights] = useStoredFlag('readerShowHighlights', false)
   // 表示設定バーは項目を「本」「文字」「訳・辞書」のタブに分け、選んだタブの項目だけを出す(最後に開いたタブを覚える)。
   const [displayTab, setDisplayTab] = useState<DisplayTab>(() => {
     const v = localStorage.getItem('readerDisplayTab')
@@ -529,6 +540,51 @@ export function Reader({
       .catch(() => {})
   }, [root, work.id])
 
+  // ハイライト(本フォルダの highlights.json)。作る・変える・消すはここで保存し、TextView は描くだけ。
+  const [highlights, setHighlights] = useState<Highlight[]>([])
+  // テキスト表示で付け直した場所(一覧の並び・ページ・位置ずれの印)。本を変えたら捨てる。
+  const [hlPlaces, setHlPlaces] = useState<Record<number, HighlightPlace | null>>({})
+  const onNotifyRef = useRef(onNotify)
+  onNotifyRef.current = onNotify
+  useEffect(() => {
+    setHighlights([])
+    setHlPlaces({})
+    listHighlights(root, work.id)
+      .then(setHighlights)
+      .catch((e) => onNotifyRef.current(`ハイライトを読み込めませんでした: ${(e as Error).message}`, null, true))
+  }, [root, work.id])
+
+  const hlFailed = useCallback((e: unknown): void => {
+    onNotifyRef.current(`ハイライトを保存できませんでした: ${(e as Error).message}`, null, true)
+  }, [])
+
+  const createHighlight = useCallback(
+    (body: { color: HighlightColor; note: string | null; text: string; parts: HighlightPart[] }): void => {
+      addHighlight(root, work.id, body)
+        .then((h) => setHighlights((hs) => [...hs, h]))
+        .catch(hlFailed)
+    },
+    [root, work.id, hlFailed]
+  )
+
+  const changeHighlight = useCallback(
+    (id: number, changes: { color?: HighlightColor; note?: string | null }): void => {
+      setHighlights((hs) => hs.map((h) => (h.id === id ? { ...h, ...changes } : h)))
+      updateHighlight(root, work.id, id, changes)
+        .then((saved) => setHighlights((hs) => hs.map((h) => (h.id === id ? saved : h))))
+        .catch(hlFailed)
+    },
+    [root, work.id, hlFailed]
+  )
+
+  const removeHighlight = useCallback(
+    (id: number): void => {
+      setHighlights((hs) => hs.filter((h) => h.id !== id))
+      deleteHighlight(root, work.id, id).catch(hlFailed)
+    },
+    [root, work.id, hlFailed]
+  )
+
   // 表示中の見開きに含まれるページのしおり。
   const spreadBookmark = bookmarks.find((b) => viewPages.includes(b.page))
 
@@ -580,6 +636,18 @@ export function Reader({
     shownMode.current = viewMode
     setTextJump(null)
   }, [viewMode])
+
+  // 一覧のハイライトの場所へ。テキスト表示はその段落の画面へ、画像表示はそのページへ。
+  function jumpToHighlight(h: Highlight): void {
+    const place = hlPlaces[h.id] ?? { block: h.parts[0].block, page: h.parts[0].page }
+    if (viewMode === 'text') setTextJump({ page: place.page, block: place.block, terms: [], seq: Date.now() })
+    else jumpTo(place.page)
+  }
+
+  function deleteHighlightFromList(h: Highlight): void {
+    if (h.note && !window.confirm('メモの付いたハイライトを削除します。よろしいですか？')) return
+    removeHighlight(h.id)
+  }
 
   function removeBookmark(id: number): void {
     setBookmarks((bs) => bs.filter((b) => b.id !== id))
@@ -759,6 +827,13 @@ export function Reader({
           title="しおり一覧の開閉"
         >
           しおり{bookmarks.length > 0 ? `（${bookmarks.length}）` : ''}
+        </button>
+        <button
+          className={`btn ${showHighlights ? 'btn-active' : ''}`}
+          onClick={() => setShowHighlights(!showHighlights)}
+          title="ハイライト一覧の開閉（テキスト表示で本文を選ぶと付けられます）"
+        >
+          ハイライト{highlights.length > 0 ? `（${highlights.length}）` : ''}
         </button>
         <button
           className={`btn ${showTags ? 'btn-active' : ''}`}
@@ -1167,6 +1242,15 @@ export function Reader({
         />
       )}
 
+      {showHighlights && (
+        <HighlightPanel
+          highlights={highlights}
+          places={hlPlaces}
+          onJump={jumpToHighlight}
+          onDelete={deleteHighlightFromList}
+        />
+      )}
+
       <div
         className="reader-stage"
         onMouseMove={(e) => {
@@ -1198,6 +1282,11 @@ export function Reader({
             dictionary={dictionary}
             jump={textJump}
             tts={settings.tts}
+            highlights={highlights}
+            onHighlightCreate={createHighlight}
+            onHighlightChange={changeHighlight}
+            onHighlightDelete={removeHighlight}
+            onHighlightsResolved={setHlPlaces}
           />
         ) : (
         <>

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import jobs, library, search, thumbnails
+from .. import bookmarks, highlights, jobs, library, search, thumbnails
 from ..db import connect
 from ..resolve import get_root, resolve_archive
 
@@ -303,15 +303,17 @@ def remove_tag(work_id: str, root: str, name: str) -> dict:
     return {"ok": True}
 
 
+def _bookmark_http(e: bookmarks.BookmarkError) -> HTTPException:
+    return HTTPException(status_code=404 if isinstance(e, bookmarks.BookmarkNotFound) else 500, detail=str(e))
+
+
 @router.get("/{work_id}/bookmarks")
 def list_bookmarks(work_id: str, root: str) -> dict:
     r = get_root(root)
-    with connect(r) as conn:
-        rows = conn.execute(
-            "SELECT id, page, note, created_at FROM bookmarks WHERE work_id = ? ORDER BY page",
-            (work_id,),
-        ).fetchall()
-    return {"bookmarks": [dict(row) for row in rows]}
+    try:
+        return {"bookmarks": bookmarks.list_bookmarks(r, work_id)}
+    except bookmarks.BookmarkError as e:
+        raise _bookmark_http(e)
 
 
 class BookmarkCreate(BaseModel):
@@ -322,24 +324,88 @@ class BookmarkCreate(BaseModel):
 @router.post("/{work_id}/bookmarks")
 def add_bookmark(work_id: str, root: str, body: BookmarkCreate) -> dict:
     r = get_root(root)
-    with connect(r) as conn:
-        if conn.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="本が見つかりません")
-        cur = conn.execute(
-            "INSERT INTO bookmarks (work_id, page, note, created_at) VALUES (?, ?, ?, ?)",
-            (work_id, body.page, body.note, _now()),
-        )
-        conn.commit()
-        bookmark_id = cur.lastrowid
-    return {"id": bookmark_id}
+    try:
+        return {"id": bookmarks.add_bookmark(r, work_id, body.page, body.note)}
+    except bookmarks.BookmarkError as e:
+        raise _bookmark_http(e)
 
 
 @router.delete("/{work_id}/bookmarks/{bookmark_id}")
 def delete_bookmark(work_id: str, bookmark_id: int, root: str) -> dict:
     r = get_root(root)
-    with connect(r) as conn:
-        conn.execute(
-            "DELETE FROM bookmarks WHERE id = ? AND work_id = ?", (bookmark_id, work_id)
-        )
-        conn.commit()
+    try:
+        bookmarks.delete_bookmark(r, work_id, bookmark_id)
+    except bookmarks.BookmarkError as e:
+        raise _bookmark_http(e)
+    return {"ok": True}
+
+
+# ---- ハイライト(本フォルダの highlights.json。位置の付け直しはレンダラーが行う) ----
+
+
+def _highlight_http(e: highlights.HighlightError) -> HTTPException:
+    if isinstance(e, highlights.HighlightNotFound):
+        return HTTPException(status_code=404, detail=str(e))
+    return HTTPException(status_code=400 if isinstance(e, highlights.HighlightInvalid) else 500, detail=str(e))
+
+
+@router.get("/{work_id}/highlights")
+def list_highlights(work_id: str, root: str) -> dict:
+    r = get_root(root)
+    try:
+        return {"highlights": highlights.list_highlights(r, work_id)}
+    except highlights.HighlightError as e:
+        raise _highlight_http(e)
+
+
+class HighlightPart(BaseModel):
+    key: str
+    block: int
+    page: int
+    start: int
+    end: int
+    text: str
+    prefix: str = ""
+    suffix: str = ""
+
+
+class HighlightCreate(BaseModel):
+    color: str
+    note: str | None = None
+    text: str
+    parts: list[HighlightPart]
+
+
+class HighlightUpdate(BaseModel):
+    color: str | None = None
+    note: str | None = None
+
+
+@router.post("/{work_id}/highlights")
+def add_highlight(work_id: str, root: str, body: HighlightCreate) -> dict:
+    r = get_root(root)
+    try:
+        return {"highlight": highlights.add_highlight(r, work_id, body.model_dump())}
+    except highlights.HighlightError as e:
+        raise _highlight_http(e)
+
+
+@router.patch("/{work_id}/highlights/{highlight_id}")
+def update_highlight(work_id: str, highlight_id: int, root: str, body: HighlightUpdate) -> dict:
+    r = get_root(root)
+    try:
+        # 送られた項目だけ変える(メモを消すときは note: null を送る)
+        changes = body.model_dump(exclude_unset=True)
+        return {"highlight": highlights.update_highlight(r, work_id, highlight_id, changes)}
+    except highlights.HighlightError as e:
+        raise _highlight_http(e)
+
+
+@router.delete("/{work_id}/highlights/{highlight_id}")
+def delete_highlight(work_id: str, highlight_id: int, root: str) -> dict:
+    r = get_root(root)
+    try:
+        highlights.delete_highlight(r, work_id, highlight_id)
+    except highlights.HighlightError as e:
+        raise _highlight_http(e)
     return {"ok": True}

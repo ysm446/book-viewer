@@ -30,6 +30,9 @@ import {
   type BookTranslation,
   type ContentBlock,
   type DictionaryResult,
+  type Highlight as BookHighlight,
+  type HighlightColor,
+  type HighlightPart,
   type LowLine,
   type PageText,
   type TranscribeEngine,
@@ -38,6 +41,7 @@ import {
   type Work
 } from './api'
 import { fmtElapsed } from './format'
+import { buildKeyIndex, HL_COLORS, partsFromRange, rangeInBlock, resolveHighlights } from './highlightAnchor'
 import { Markdown } from './Markdown'
 import { textFontOf, type TextFont } from './textFonts'
 import type { AppSettings } from '../../preload'
@@ -80,6 +84,19 @@ interface Props {
   jump: TextJump | null
   /** 音声読み上げ(Irodori-TTS)のサーバーと声の設定 */
   tts: AppSettings['tts']
+  /** この本のハイライト。作る・変える・消すはリーダーが保存する */
+  highlights: BookHighlight[]
+  onHighlightCreate: (h: { color: HighlightColor; note: string | null; text: string; parts: HighlightPart[] }) => void
+  onHighlightChange: (id: number, changes: { color?: HighlightColor; note?: string | null }) => void
+  onHighlightDelete: (id: number) => void
+  /** 今の本文で付け直したハイライトの場所(id → 最初の範囲のブロックと原本のページ。見つからなければ null) */
+  onHighlightsResolved: (resolved: Record<number, HighlightPlace | null>) => void
+}
+
+/** 付け直したハイライトの場所。 */
+export interface HighlightPlace {
+  block: number
+  page: number
 }
 
 /** 検索結果から開いた箇所。block はアプリ用の本文のブロックの添字、seq は開くたびに変わる通し番号。 */
@@ -298,6 +315,25 @@ function DictMeaning({ text }: { text: string }): JSX.Element {
 /** 段落の右クリックのメニューの幅。 */
 const BLOCK_MENU_WIDTH = 220
 
+/** メモのあるハイライトに重ねる下線(CSS Custom Highlight API)。 */
+const HL_NOTE = 'hl-note'
+/** ハイライトのメニューの幅と、下に開くのに要る高さ(足りなければ上に開く)。 */
+const HL_MENU_WIDTH = 260
+const HL_MENU_ROOM = 200
+
+/** ハイライトのメニュー。id が null なら選んだ範囲(parts)から作る。x / y は本文の面(.rf-stage)の中の位置。 */
+interface HlMenu {
+  id: number | null
+  parts: HighlightPart[]
+  text: string
+  /** 編集中のメモの下書き(null ならメモを編集していない) */
+  note: string | null
+  x: number
+  y: number
+  /** 選んだ範囲の上に出す(下に余裕が無いとき) */
+  above: boolean
+}
+
 /** 訳す対象のブロックか(バックエンドの translate._translatable と同じ: 段落・見出し・箇条・引用。場面転換は除く)。 */
 function isTranslatableBlock(b: ContentBlock | undefined): boolean {
   return (
@@ -455,7 +491,12 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     llmReady,
     dictionary,
     jump,
-    tts
+    tts,
+    highlights,
+    onHighlightCreate,
+    onHighlightChange,
+    onHighlightDelete,
+    onHighlightsResolved
   },
   ref
 ): JSX.Element {
@@ -901,7 +942,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         // 訳さないブロック(図など)と、まだ訳していないブロックは原文のまま
         out.push(<div key={i} data-b={i} className={cls}>{md(b.md)}</div>)
       } else if (translation === 'ja') {
-        out.push(<div key={i} data-b={i} className={cls}>{md(jaText(t))}</div>)
+        // 訳文だけのブロック(data-ja)にはハイライトを付けない・描かない(原文に付ける)
+        out.push(<div key={i} data-b={i} data-ja="" className={cls}>{md(jaText(t))}</div>)
       } else if (pairUnit === 'sentence') {
         out.push(
           <div key={i} data-b={i} className={`${cls} rf-pairs`}>
@@ -1085,10 +1127,173 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     }
   }, [searchTerms, body, showStage])
 
+  // ---- ハイライト ----
+  //
+  // 本文を選ぶと色とメモのメニューを出し、ハイライトをクリックすると同じメニューで色・メモを変える・消す。
+  // 位置の記録と付け直しは highlightAnchor.ts。描くのは今の区画だけ(CSS Custom Highlight API)。
+
+  const keyIndex = useMemo(() => (blocks ? buildKeyIndex(blocks) : null), [blocks])
+  const resolved = useMemo(
+    () => (blocks && keyIndex ? resolveHighlights(highlights, blocks, keyIndex) : null),
+    [highlights, blocks, keyIndex]
+  )
+  // 付け直した場所をリーダーへ伝える(一覧の並び・ページ・位置ずれの印)。
+  const onResolvedRef = useRef(onHighlightsResolved)
+  onResolvedRef.current = onHighlightsResolved
+  useEffect(() => {
+    if (!resolved || !blocks) return
+    const out: Record<number, HighlightPlace | null> = {}
+    resolved.forEach((parts, id) => {
+      const b = parts.find((x): x is number => x !== null)
+      out[id] = b === undefined ? null : { block: b, page: blocks[b].page }
+    })
+    onResolvedRef.current(out)
+  }, [resolved, blocks])
+
+  /** 描いたハイライトの範囲(クリックでどれを押したかを調べる)。 */
+  const drawn = useRef<{ id: number; range: Range }[]>([])
+  const hasGeo = !!geo
+  useEffect(() => {
+    const flow = flowRef.current
+    if (!flow || !resolved || !current || typeof Highlight === 'undefined') return
+    const byColor = new Map<HighlightColor, Range[]>()
+    const noted: Range[] = []
+    const list: { id: number; range: Range }[] = []
+    for (const h of highlights) {
+      const blocksOf = resolved.get(h.id)
+      h.parts.forEach((p, k) => {
+        const b = blocksOf?.[k]
+        if (b === null || b === undefined || b < current.start || b >= current.end) return
+        const el = flow.querySelector(`[data-b="${b}"]`)
+        if (!el || el.hasAttribute('data-ja')) return
+        const r = rangeInBlock(el, p)
+        if (!r) return
+        byColor.set(h.color, [...(byColor.get(h.color) ?? []), r])
+        if (h.note) noted.push(r)
+        list.push({ id: h.id, range: r })
+      })
+    }
+    drawn.current = list
+    for (const c of HL_COLORS) CSS.highlights.set(`hl-${c.value}`, new Highlight(...(byColor.get(c.value) ?? [])))
+    CSS.highlights.set(HL_NOTE, new Highlight(...noted))
+    return () => {
+      drawn.current = []
+      for (const c of HL_COLORS) CSS.highlights.delete(`hl-${c.value}`)
+      CSS.highlights.delete(HL_NOTE)
+    }
+  }, [highlights, resolved, current, body, showStage, hasGeo])
+
+  const [hlMenu, setHlMenu] = useState<HlMenu | null>(null)
+  const hlMenuRef = useRef<HTMLDivElement | null>(null)
+  const menuHighlight =
+    hlMenu && hlMenu.id !== null ? (highlights.find((h) => h.id === hlMenu.id) ?? null) : null
+
+  /** 画面座標の下にある(描いている)ハイライトと、その行の矩形。重なっていれば後から付けたもの。 */
+  function highlightAt(x: number, y: number): { id: number; rect: DOMRect } | null {
+    const pos = document.caretRangeFromPoint?.(x, y)
+    if (!pos) return null
+    for (let i = drawn.current.length - 1; i >= 0; i--) {
+      const d = drawn.current[i]
+      if (!d.range.isPointInRange(pos.startContainer, pos.startOffset)) continue
+      // caretRangeFromPoint は余白の上でも近くの字を返すので、本当に範囲の上かを確かめる
+      for (const r of Array.from(d.range.getClientRects())) {
+        if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1) return { id: d.id, rect: r }
+      }
+    }
+    return null
+  }
+
+  /** メニューの位置(範囲の矩形の下。下に余裕が無ければ上)。 */
+  function menuPlace(rect: DOMRect): { x: number; y: number; above: boolean } | null {
+    const stage = stageRef.current
+    if (!stage) return null
+    const box = stage.getBoundingClientRect()
+    const above = rect.bottom + HL_MENU_ROOM > box.bottom
+    return {
+      x: Math.min(Math.max(rect.left - box.left, 8), box.width - HL_MENU_WIDTH - 8),
+      y: above ? box.bottom - rect.top + 6 : rect.bottom - box.top + 6,
+      above
+    }
+  }
+
+  // 本文を選び終えたら作るメニュー、選ばずにハイライトをクリックしたらそのハイライトのメニューを出す。
+  function onFlowMouseUp(e: React.MouseEvent): void {
+    if (e.button !== 0 || !blocks) return
+    const { clientX: x, clientY: y } = e
+    // 選択が確定してから調べる
+    window.setTimeout(() => {
+      const flow = flowRef.current
+      if (!flow) return
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        if (!flow.contains(range.commonAncestorContainer)) return
+        const parts = partsFromRange(flow, range, blocks)
+        const rects = range.getClientRects()
+        const place = rects.length > 0 ? menuPlace(rects[rects.length - 1]) : null
+        if (parts.length === 0 || !place) return
+        closeDict()
+        setBlockMenu(null)
+        setHlMenu({ id: null, parts, text: parts.map((p) => p.text).join('\n'), note: null, ...place })
+        return
+      }
+      const hit = highlightAt(x, y)
+      const place = hit ? menuPlace(hit.rect) : null
+      if (!hit || !place) return
+      closeDict()
+      setBlockMenu(null)
+      setHlMenu({ id: hit.id, parts: [], text: '', note: null, ...place })
+    }, 0)
+  }
+
+  // メニューの外を押したら閉じる(本文を選び直すときも、押した時点で前のメニューは閉じる)。
+  const hlOpen = !!hlMenu
+  useEffect(() => {
+    if (!hlOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (!hlMenuRef.current?.contains(e.target as Node)) setHlMenu(null)
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [hlOpen])
+
+  function pickColor(color: HighlightColor): void {
+    if (!hlMenu) return
+    if (hlMenu.id === null) {
+      onHighlightCreate({ color, note: null, text: hlMenu.text, parts: hlMenu.parts })
+      window.getSelection()?.removeAllRanges()
+    } else {
+      onHighlightChange(hlMenu.id, { color })
+    }
+    setHlMenu(null)
+  }
+
+  function saveNote(): void {
+    if (!hlMenu || hlMenu.note === null) return
+    const note = hlMenu.note.trim() ? hlMenu.note.trim() : null
+    if (hlMenu.id === null) {
+      onHighlightCreate({ color: HL_COLORS[0].value, note, text: hlMenu.text, parts: hlMenu.parts })
+      window.getSelection()?.removeAllRanges()
+    } else {
+      onHighlightChange(hlMenu.id, { note })
+    }
+    setHlMenu(null)
+  }
+
+  function removeHighlight(): void {
+    if (!menuHighlight) return
+    if (menuHighlight.note && !window.confirm('メモの付いたハイライトを削除します。よろしいですか？')) return
+    onHighlightDelete(menuHighlight.id)
+    setHlMenu(null)
+  }
+
   // ページを送ったら・辞書を切ったら閉じる。Escape でも閉じる。
   useEffect(() => {
     closeDict()
   }, [screen, sec, dictEnabled, closeDict])
+  useEffect(() => {
+    setHlMenu(null)
+  }, [screen, sec])
   // 訳し直すのメニュー(この画面 / 全部)
   const [redoMenu, setRedoMenu] = useState(false)
   // 段落の右クリックのメニュー(この段落 / この画面を訳す)。x / y は本文の面(.rf-stage)の中の位置。
@@ -1099,7 +1304,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
 
   // 辞書やメニューが開いている間の Escape は、それを閉じるだけにする。リーダーは Escape で一覧へ戻るので、
   // 先に(capture で)受けて止める。
-  const popupOpen = !!dict || redoMenu || !!blockMenu
+  const popupOpen = !!dict || redoMenu || !!blockMenu || hlOpen
   useEffect(() => {
     if (!popupOpen) return
     const onKey = (e: KeyboardEvent): void => {
@@ -1108,6 +1313,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       closeDict()
       setRedoMenu(false)
       setBlockMenu(null)
+      setHlMenu(null)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -1802,6 +2008,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                   style={{ width: geo.width, height: geo.height }}
                   onMouseMove={onFlowMouseMove}
                   onMouseLeave={onFlowMouseLeave}
+                  onMouseUp={onFlowMouseUp}
                   onContextMenu={onFlowContextMenu}
                 >
                   <div
@@ -1907,6 +2114,81 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                       })()}
                     </div>
                   </>
+                )}
+                {hlMenu && (hlMenu.id === null || menuHighlight) && (
+                  <div
+                    ref={hlMenuRef}
+                    className="ex-popup hl-menu"
+                    role="dialog"
+                    aria-label={hlMenu.id === null ? 'ハイライトを付ける' : 'ハイライト'}
+                    style={
+                      hlMenu.above
+                        ? { left: hlMenu.x, top: 'auto', bottom: hlMenu.y, width: HL_MENU_WIDTH }
+                        : { left: hlMenu.x, top: hlMenu.y, width: HL_MENU_WIDTH }
+                    }
+                  >
+                    {hlMenu.note === null ? (
+                      <>
+                        <div className="hl-menu-row">
+                          {HL_COLORS.map((c) => {
+                            const on = menuHighlight?.color === c.value
+                            return (
+                              <button
+                                key={c.value}
+                                className={`hl-swatch hl-swatch-${c.value} ${on ? 'is-current' : ''}`}
+                                onClick={() => pickColor(c.value)}
+                                aria-pressed={on}
+                                aria-label={`${c.label}のハイライト`}
+                                title={hlMenu.id === null ? `${c.label}のハイライトを付ける` : `${c.label}に変える`}
+                              >
+                                {on ? '✓' : ''}
+                              </button>
+                            )
+                          })}
+                          <span className="text-toolbar-spacer" />
+                          <button
+                            className="btn"
+                            onClick={() => setHlMenu({ ...hlMenu, note: menuHighlight?.note ?? '' })}
+                            title={hlMenu.id === null ? 'メモを付けてハイライトする（色は黄）' : undefined}
+                          >
+                            {menuHighlight?.note ? 'メモを編集' : 'メモ'}
+                          </button>
+                          {menuHighlight && (
+                            <button className="btn hl-menu-del" onClick={removeHighlight}>
+                              削除
+                            </button>
+                          )}
+                        </div>
+                        {menuHighlight?.note && <div className="hl-menu-note">{menuHighlight.note}</div>}
+                      </>
+                    ) : (
+                      <div className="hl-note-edit">
+                        <textarea
+                          className="hl-note-input"
+                          value={hlMenu.note}
+                          autoFocus
+                          rows={4}
+                          placeholder="メモ（Ctrl+Enter で保存）"
+                          onChange={(e) => setHlMenu({ ...hlMenu, note: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                              e.preventDefault()
+                              saveNote()
+                            }
+                          }}
+                          aria-label="メモ"
+                        />
+                        <div className="hl-menu-actions">
+                          <button className="btn" onClick={() => setHlMenu(null)}>
+                            キャンセル
+                          </button>
+                          <button className="btn btn-primary" onClick={saveNote}>
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
                 {dict && (
                   <div

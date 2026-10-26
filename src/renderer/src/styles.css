@@ -46,6 +46,10 @@
   --backdrop: rgba(0, 0, 0, 0.5);
   /* ページ画像の上に重ねるオーバーレイ(スクラバー・しおりのバッジ)の色。rgba(var(--overlay-rgb), α) で使う */
   --overlay-rgb: 0, 0, 0;
+  /* ハイライトの色(本文の上に重ねる半透明の面。文字は本文の色のまま読める濃さ) */
+  --hl-yellow: rgba(229, 176, 76, 0.3);
+  --hl-green: rgba(123, 216, 143, 0.24);
+  --hl-pink: rgba(240, 120, 160, 0.28);
   color-scheme: dark;
 }
 /* 白: まぶしくならないよう、真っ白を避けて面を少し落としたグレーにする。
@@ -81,6 +85,9 @@
   --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.2);
   --backdrop: rgba(0, 0, 0, 0.3);
   --overlay-rgb: 0, 0, 0;
+  --hl-yellow: rgba(255, 200, 0, 0.38);
+  --hl-green: rgba(80, 190, 100, 0.3);
+  --hl-pink: rgba(240, 100, 150, 0.28);
   color-scheme: light;
 }
 /* セピア: キーカラー(--accent)は面に馴染む茶色。注意(--warn)は茶と紛れない焦げ橙。 */
@@ -116,6 +123,9 @@
   --backdrop: rgba(40, 30, 20, 0.3);
   /* 黒の半透明だとセピアの面の上で灰色に見えるので、焦げ茶にする */
   --overlay-rgb: 40, 26, 14;
+  --hl-yellow: rgba(240, 180, 0, 0.36);
+  --hl-green: rgba(90, 170, 90, 0.28);
+  --hl-pink: rgba(220, 100, 130, 0.26);
   color-scheme: light;
 }
 
@@ -1658,6 +1668,111 @@ input[type='checkbox']:focus-visible {
 ::highlight(speaking) {
   background-color: var(--accent-soft);
 }
+/* ---- ハイライト(テキスト表示で選んだ範囲に付ける色とメモ) ---- */
+::highlight(hl-yellow) {
+  background-color: var(--hl-yellow);
+}
+::highlight(hl-green) {
+  background-color: var(--hl-green);
+}
+::highlight(hl-pink) {
+  background-color: var(--hl-pink);
+}
+/* メモのあるハイライトは点線の下線を足す(メモの有無を色だけに頼らない) */
+::highlight(hl-note) {
+  text-decoration: underline dotted var(--text-sub);
+}
+/* 本文を選ぶ・ハイライトをクリックすると出るメニュー。位置と幅は TextView が範囲の位置から決める。 */
+.hl-menu {
+  right: auto;
+  padding: 6px;
+  writing-mode: horizontal-tb;
+}
+.hl-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hl-menu .btn {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.hl-menu-del:hover:not(:disabled) {
+  background: var(--danger-fill);
+  border-color: var(--danger-fill);
+  color: #fff;
+}
+/* 色の見本(一覧の印 .hl-mark も同じ色のクラスを使う) */
+.hl-swatch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.hl-swatch:hover {
+  border-color: var(--text-sub);
+}
+.hl-swatch.is-current {
+  border-color: var(--text);
+}
+.hl-swatch-yellow {
+  background: var(--hl-yellow);
+}
+.hl-swatch-green {
+  background: var(--hl-green);
+}
+.hl-swatch-pink {
+  background: var(--hl-pink);
+}
+.hl-menu-note {
+  margin-top: 6px;
+  padding: 6px 4px 2px;
+  border-top: 1px solid var(--border);
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.hl-note-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hl-note-input {
+  width: 100%;
+  min-height: 80px;
+  max-height: 200px;
+  padding: 6px 8px;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.hl-note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.hl-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .dict-popup {
   right: auto;
   max-height: 50%;
@@ -2140,7 +2255,8 @@ input[type='checkbox']:focus-visible {
   max-height: 40vh;
 }
 /* 一覧をスクロールしても、見出しと操作ボタンは上に残す */
-.toc-panel > .reader-info-head {
+.toc-panel > .reader-info-head,
+.hl-panel > .reader-info-head {
   position: sticky;
   top: -10px;
   z-index: 1;
@@ -2248,6 +2364,97 @@ input[type='checkbox']:focus-visible {
 .toc-section {
   font-size: 12px;
   color: var(--text-sub);
+}
+/* ---- ハイライトの一覧(リーダー上部のパネル) ---- */
+.hl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hl-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-radius: 6px;
+}
+.hl-item:hover {
+  background: var(--panel-2);
+}
+.hl-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.hl-mark {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+.hl-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hl-text,
+.hl-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.hl-text {
+  -webkit-line-clamp: 2;
+  line-height: 1.55;
+}
+.hl-note {
+  -webkit-line-clamp: 3;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sub);
+  white-space: pre-wrap;
+}
+.hl-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+/* 削除は行に乗ったとき・フォーカスしたときだけ出す */
+.hl-del {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  margin: 4px 4px 0 0;
+  font-size: 14px;
+  opacity: 0;
+}
+.hl-item:hover .hl-del,
+.hl-del:focus-visible {
+  opacity: 1;
+}
+.hl-del:hover:not(:disabled) {
+  background: var(--danger-fill);
+  border-color: var(--danger-fill);
+  color: #fff;
 }
 /* 章立ての編集 */
 .toc-edit {
