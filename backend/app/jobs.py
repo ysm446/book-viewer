@@ -1,7 +1,7 @@
 """重い処理のジョブキュー(単一ワーカーで順次処理)。
 
-文字起こし(transcribe)・章立てと要約(structure)・本文検索の索引(index)・英語の本の日本語訳
-(translate)・検索結果の画面の段落の索引(vectors)を 1 件ずつ直列に行う。
+文字起こし(transcribe)・誤字の補正(proofread)・章立てと要約(structure)・本文検索の索引(index)・
+英語の本の日本語訳(translate)・検索結果の画面の段落の索引(vectors)を 1 件ずつ直列に行う。
 GPU(YomiToku・llama-server)を取り合わないように、すべてこのキュー経由にする。
 """
 
@@ -11,10 +11,10 @@ import threading
 import time
 from pathlib import Path
 
-from . import embedding, llm_server, progress, search, structure, transcribe, translate
+from . import embedding, library, llm_server, progress, proofread, search, structure, transcribe, translate
 from .db import connect
 
-KINDS = ("transcribe", "structure", "index", "translate", "vectors")
+KINDS = ("transcribe", "proofread", "structure", "index", "translate", "vectors")
 
 _lock = threading.Lock()
 _cond = threading.Condition(_lock)
@@ -77,6 +77,7 @@ def enqueue(
     """ジョブを積む。同じ本・同じ種類(translate は同じ訳の種類)のジョブが待機中か実行中なら積まない。
 
     - transcribe: 文字起こし(pages 省略時は未処理の全ページ、force で作り直し。engine を使う)
+    - proofread: 日本語の本の誤字の補正(まだ読んでいない段落だけ。force で全部読み直し)
     - structure: 章立てと要約(force で章立てから作り直し)
     - index: 本文検索の索引
     - translate: 英語の本の日本語訳(extra["style"] の訳の種類で。force で全部訳し直し、extra["blocks"] で
@@ -168,6 +169,17 @@ def _run(job: dict) -> None:
             force=job.get("force", False),
             cancel_check=cancel_check,
         )
+    elif job["kind"] == "proofread":
+        if not base_url:
+            raise RuntimeError("モデルが読み込まれていません。")
+        proofread.run(
+            root,
+            work_id,
+            base_url,
+            redo=job.get("force", False),
+            model=st.get("model"),
+            cancel_check=cancel_check,
+        )
     elif job["kind"] == "structure":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")
@@ -207,6 +219,11 @@ def _run(job: dict) -> None:
         )
 
 
+def _language(root: Path, work_id: str) -> str:
+    book_dir, _, _ = transcribe._book(root, work_id)
+    return library.book_language(library.read_book(book_dir) or {})
+
+
 def _next_needs_embedding() -> bool:
     """次に待っているジョブも埋め込みモデルを使うか(スキャン後に何冊も続くとき、読み込み直さない)。"""
     with _lock:
@@ -235,15 +252,22 @@ def _worker() -> None:
             status, error = "error", str(e)
 
         # 本文・要約・訳文が変わったので、検索の索引を更新する(途中で止めた分も含む)。
-        if job["kind"] in ("transcribe", "structure", "translate"):
+        if job["kind"] in ("transcribe", "proofread", "structure", "translate"):
             try:
                 with connect(Path(job["root"])) as conn:
                     search.update_index(conn, Path(job["root"]), job["work_id"])
                     conn.commit()
             except Exception:  # noqa: BLE001 - 索引の更新失敗でワーカーは落とさない
                 pass
-        # 本文が増えた・変わったので、段落の意味の索引も作り直す(使い回せる段落は埋め込み直さない)。
+        # 日本語の本は、文字起こしに続けて誤字を補正する(LLM を読み込んでいるときだけ。読んだ段落は読み直さない)。
         if job["kind"] == "transcribe" and status != "canceled":
+            try:
+                if llm_server.status()["running"] and _language(Path(job["root"]), job["work_id"]) == "ja":
+                    enqueue(job["root"], job["work_id"], "proofread")
+            except Exception:  # noqa: BLE001 - 積めなくてもワーカーは落とさない
+                pass
+        # 本文が増えた・変わったので、段落の意味の索引も作り直す(使い回せる段落は埋め込み直さない)。
+        if job["kind"] in ("transcribe", "proofread") and status != "canceled":
             try:
                 enqueue(job["root"], job["work_id"], "vectors")
             except Exception:  # noqa: BLE001 - 積めなくてもワーカーは落とさない

@@ -1392,7 +1392,9 @@ export function App(): JSX.Element {
                 <span className="sbq-title" title={queue.current.title}>
                   {queue.current.kind === 'transcribe'
                     ? '文字起こし: '
-                    : queue.current.kind === 'structure'
+                    : queue.current.kind === 'proofread'
+                      ? '誤字の補正: '
+                      : queue.current.kind === 'structure'
                       ? '章立て・要約: '
                       : queue.current.kind === 'index'
                         ? '検索の索引: '

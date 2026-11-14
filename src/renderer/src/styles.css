@@ -1682,6 +1682,10 @@ input[type='checkbox']:focus-visible {
 ::highlight(hl-note) {
   text-decoration: underline dotted var(--text-sub);
 }
+/* 誤字を自動で補正した語(proofread)。目立たせず、補正したことだけ分かる細い下線 */
+::highlight(text-fix) {
+  text-decoration: underline 1px var(--border-strong);
+}
 /* 本文を選ぶ・ハイライトをクリックすると出るメニュー。位置と幅は TextView が範囲の位置から決める。 */
 .hl-menu {
   right: auto;
@@ -1767,6 +1771,17 @@ input[type='checkbox']:focus-visible {
 .hl-note-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+/* 補正した語のメニュー(.hl-menu を使い回す)。元の字 → 直した字と、補足 */
+.fix-menu-text {
+  font-size: 13px;
+  color: var(--text);
+}
+.fix-menu-note {
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 .hl-menu-actions {
   display: flex;

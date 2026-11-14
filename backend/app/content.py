@@ -10,6 +10,7 @@
   どのページの分かを cont([ページ, md の中の開始位置])に残す。読書位置・しおり・
   根拠のページ・ネタバレ防止はこの原本のページ番号で扱う。
 - 章(level 1)の始まりのブロックには break を付ける(表示で改ページする)。
+- 誤字の補正(proofread.py の corrections.json)を当てる。補正したブロックは fixes と pk(補正前の指紋)を持つ。
 
 content.json は生成物。ページのファイルや章立てが変わっていれば、読むときに作り直す。
 """
@@ -23,7 +24,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import layout_ocr, library, transcribe
+from . import layout_ocr, library, proofread, transcribe
 
 CONTENT_FILENAME = "content.json"
 SCHEMA = 1
@@ -131,6 +132,12 @@ def _signature(book_dir: Path, done: list[int], chapters: list[dict], lang: str)
             except OSError:
                 h.update(f"{path.name} -\n".encode())
     h.update(json.dumps(chapters, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    # 誤字の補正(proofread.py)。補正していない本は指紋を変えない(段落の索引を作り直させない)。
+    try:
+        st = proofread.corrections_path(book_dir).stat()
+        h.update(f"corrections {st.st_mtime_ns} {st.st_size}\n".encode())
+    except OSError:
+        pass
     return h.hexdigest()
 
 
@@ -161,12 +168,14 @@ def load(root: Path, work_id: str) -> dict:
         pass
     pages = {p: transcribe.page_path(book_dir, p).read_text(encoding="utf-8") for p in done}
     heads = {p: transcribe._read_meta(book_dir, p).get("head_continues") for p in done}
+    blocks = build_blocks(pages, heads, chapters, lang)
+    proofread.apply(book_dir, blocks)
     data = {
         "schema": SCHEMA,
         "signature": signature,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "pages_done": len(done),
-        "blocks": build_blocks(pages, heads, chapters, lang),
+        "blocks": blocks,
     }
     try:
         tmp = path.with_suffix(".json.tmp")

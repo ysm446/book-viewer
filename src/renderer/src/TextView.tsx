@@ -11,18 +11,21 @@ import {
 } from 'react'
 import {
   cancelJob,
+  enqueueProofread,
   enqueueTranscribe,
   enqueueTranslate,
   figureUrl,
   getContent,
   getQueue,
   getPageText,
+  getProofread,
   getTranslation,
   getTranslationLive,
   getTtsStatus,
   lookupWord,
   pageUrl,
   savePageText,
+  setProofreadFix,
   startTts,
   ttsSpeak,
   ttsVoiceOf,
@@ -35,13 +38,15 @@ import {
   type HighlightPart,
   type LowLine,
   type PageText,
+  type ProofreadSummary,
+  type TextFix,
   type TranscribeEngine,
   type TranslatedBlock,
   type TranslationLive,
   type Work
 } from './api'
 import { fmtElapsed } from './format'
-import { buildKeyIndex, HL_COLORS, partsFromRange, rangeInBlock, resolveHighlights } from './highlightAnchor'
+import { buildKeyIndex, fixRange, HL_COLORS, partsFromRange, rangeInBlock, resolveHighlights } from './highlightAnchor'
 import { Markdown } from './Markdown'
 import { textFontOf, type TextFont } from './textFonts'
 import type { AppSettings } from '../../preload'
@@ -317,6 +322,8 @@ const BLOCK_MENU_WIDTH = 220
 
 /** メモのあるハイライトに重ねる下線(CSS Custom Highlight API)。 */
 const HL_NOTE = 'hl-note'
+/** 誤字を自動で補正した語(CSS Custom Highlight API の名前) */
+const FIX_HIGHLIGHT = 'text-fix'
 /** ハイライトのメニューの幅と、下に開くのに要る高さ(足りなければ上に開く)。 */
 const HL_MENU_WIDTH = 260
 const HL_MENU_ROOM = 200
@@ -692,6 +699,81 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       })
       .catch(() => {})
   }, [isEnglish, work.id, watchTranslate])
+
+  // ---- 誤字の補正(日本語の本。proofread.py) ----
+
+  const isJapanese = !isEnglish
+  const [proof, setProof] = useState<ProofreadSummary | null>(null)
+  const [proofJob, setProofJob] = useState<Job>(null)
+  const reloadProof = useCallback(async (): Promise<void> => {
+    setProof(await getProofread(root, work.id))
+  }, [root, work.id])
+  useEffect(() => {
+    if (!isJapanese || !signature) return
+    reloadProof().catch(() => {})
+  }, [isJapanese, signature, reloadProof])
+
+  // 補正の進み具合を追う。補正はまとまりごとに保存されるので、ときどき本文を読み込み直して読みながら反映する。
+  const proofPolling = useRef(false)
+  const watchProofread = useCallback((): void => {
+    if (proofPolling.current) return
+    proofPolling.current = true
+    let lastCurrent = -1
+    const tick = async (): Promise<void> => {
+      if (!alive.current) {
+        proofPolling.current = false
+        return
+      }
+      try {
+        const q = await getQueue()
+        const cur = q.current?.work_id === work.id && q.current.kind === 'proofread' ? q.current : null
+        const pending = q.pending.some((j) => j.work_id === work.id && j.kind === 'proofread')
+        if (cur) setProofJob({ state: 'running', current: cur.current, total: cur.total })
+        else if (pending) setProofJob({ state: 'queued', current: 0, total: 0 })
+        const progressed = cur !== null && cur.current !== lastCurrent
+        lastCurrent = cur ? cur.current : -1
+        if (progressed && Date.now() - loadedAt.current > 15000) await reload()
+        if (!cur && !pending) {
+          const recent = q.recent.filter((r) => r.work_id === work.id && r.kind === 'proofread')
+          const last = recent[recent.length - 1]
+          if (last?.status === 'error') setError(last.error ?? '誤字の補正に失敗しました')
+          await reload()
+          await reloadProof()
+          setProofJob(null)
+          proofPolling.current = false
+          return
+        }
+      } catch {
+        // 一時的な取得失敗は次の周期で取り直す
+      }
+      setTimeout(() => void tick(), 1500)
+    }
+    void tick()
+  }, [work.id, reload, reloadProof])
+
+  // 開いた時点と、文字起こしが終わった時点(LLM を読み込んでいれば続けて補正が積まれる)に、補正中なら進み具合を追う。
+  useEffect(() => {
+    if (!isJapanese || job) return
+    getQueue()
+      .then((q) => {
+        const active =
+          (q.current?.work_id === work.id && q.current.kind === 'proofread') ||
+          q.pending.some((j) => j.work_id === work.id && j.kind === 'proofread')
+        if (active) watchProofread()
+      })
+      .catch(() => {})
+  }, [isJapanese, job, work.id, watchProofread])
+
+  async function proofreadAll(): Promise<void> {
+    setError(null)
+    try {
+      await enqueueProofread(root, work.id)
+      setProofJob({ state: 'queued', current: 0, total: 0 })
+      watchProofread()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   async function translate(opts: { redo?: boolean; stale?: boolean; blocks?: number[] } = {}): Promise<void> {
     setError(null)
@@ -1183,8 +1265,58 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     }
   }, [highlights, resolved, current, body, showStage, hasGeo])
 
+  // 誤字を自動で補正した語に、今の区画だけ薄い下線を引く。クリックで元の字を見せて戻せる(fixMenu)。
+  const drawnFixes = useRef<{ block: number; fix: TextFix; range: Range }[]>([])
+  useEffect(() => {
+    const flow = flowRef.current
+    if (!flow || !blocks || !current || typeof Highlight === 'undefined') return
+    const list: { block: number; fix: TextFix; range: Range }[] = []
+    for (let i = current.start; i < current.end; i++) {
+      const fixes = blocks[i]?.fixes
+      if (!fixes) continue
+      const el = flow.querySelector(`[data-b="${i}"]`)
+      if (!el) continue
+      for (const fix of fixes) {
+        const range = fixRange(el, blocks[i].md, fix)
+        if (range) list.push({ block: i, fix, range })
+      }
+    }
+    drawnFixes.current = list
+    CSS.highlights.set(FIX_HIGHLIGHT, new Highlight(...list.map((d) => d.range)))
+    return () => {
+      drawnFixes.current = []
+      CSS.highlights.delete(FIX_HIGHLIGHT)
+    }
+  }, [blocks, current, body, showStage, hasGeo])
+
   const [hlMenu, setHlMenu] = useState<HlMenu | null>(null)
   const hlMenuRef = useRef<HTMLDivElement | null>(null)
+  // 補正した語をクリックすると出すメニュー(元の字と「元に戻す」)。x / y は本文の面(.rf-stage)の中の位置。
+  const [fixMenu, setFixMenu] = useState<{ block: number; fix: TextFix; x: number; y: number; above: boolean } | null>(
+    null
+  )
+  const fixMenuRef = useRef<HTMLDivElement | null>(null)
+  const fixOpen = !!fixMenu
+  useEffect(() => {
+    if (!fixOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (!fixMenuRef.current?.contains(e.target as Node)) setFixMenu(null)
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [fixOpen])
+
+  async function revertFix(): Promise<void> {
+    if (!fixMenu) return
+    const { block, fix } = fixMenu
+    setFixMenu(null)
+    try {
+      await setProofreadFix(root, work.id, block, fix.pos, true)
+      await reload()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
   const menuHighlight =
     hlMenu && hlMenu.id !== null ? (highlights.find((h) => h.id === hlMenu.id) ?? null) : null
 
@@ -1198,6 +1330,20 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       // caretRangeFromPoint は余白の上でも近くの字を返すので、本当に範囲の上かを確かめる
       for (const r of Array.from(d.range.getClientRects())) {
         if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1) return { id: d.id, rect: r }
+      }
+    }
+    return null
+  }
+
+  /** 画面座標の下にある補正した語と、その行の矩形。 */
+  function fixAt(x: number, y: number): { block: number; fix: TextFix; rect: DOMRect } | null {
+    const pos = document.caretRangeFromPoint?.(x, y)
+    if (!pos) return null
+    for (const d of drawnFixes.current) {
+      if (!d.range.isPointInRange(pos.startContainer, pos.startOffset)) continue
+      for (const r of Array.from(d.range.getClientRects())) {
+        if (x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1)
+          return { block: d.block, fix: d.fix, rect: r }
       }
     }
     return null
@@ -1238,8 +1384,17 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         return
       }
       const hit = highlightAt(x, y)
-      const place = hit ? menuPlace(hit.rect) : null
-      if (!hit || !place) return
+      if (!hit) {
+        const fx = fixAt(x, y)
+        const fxPlace = fx ? menuPlace(fx.rect) : null
+        if (!fx || !fxPlace) return
+        closeDict()
+        setBlockMenu(null)
+        setFixMenu({ block: fx.block, fix: fx.fix, ...fxPlace })
+        return
+      }
+      const place = menuPlace(hit.rect)
+      if (!place) return
       closeDict()
       setBlockMenu(null)
       setHlMenu({ id: hit.id, parts: [], text: '', note: null, ...place })
@@ -1293,6 +1448,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   }, [screen, sec, dictEnabled, closeDict])
   useEffect(() => {
     setHlMenu(null)
+    setFixMenu(null)
   }, [screen, sec])
   // 訳し直すのメニュー(この画面 / 全部)
   const [redoMenu, setRedoMenu] = useState(false)
@@ -1304,7 +1460,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
 
   // 辞書やメニューが開いている間の Escape は、それを閉じるだけにする。リーダーは Escape で一覧へ戻るので、
   // 先に(capture で)受けて止める。
-  const popupOpen = !!dict || redoMenu || !!blockMenu || hlOpen
+  const popupOpen = !!dict || redoMenu || !!blockMenu || hlOpen || fixOpen
   useEffect(() => {
     if (!popupOpen) return
     const onKey = (e: KeyboardEvent): void => {
@@ -1314,6 +1470,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       setRedoMenu(false)
       setBlockMenu(null)
       setHlMenu(null)
+      setFixMenu(null)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -1665,6 +1822,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const doneCount = content?.pages_done ?? 0
   const remaining = work.page_count - doneCount
   const pct = job && job.total > 0 ? Math.round((job.current / job.total) * 100) : 0
+  const proofPct = proofJob && proofJob.total > 0 ? Math.round((proofJob.current / proofJob.total) * 100) : 0
   const pageInfo = texts[page]
   const bookPct =
     blocks && blocks.length > 0 && anchor.current !== null
@@ -1706,6 +1864,46 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
             </button>
           )
         )}
+        {isJapanese && doneCount > 0 && !job && (proofJob ? (
+          <>
+            <span className="analyze-bar text-toolbar-bar">
+              <span className="analyze-bar-fill" style={{ width: `${proofPct}%` }} />
+            </span>
+            <span className="text-toolbar-note">
+              {proofJob.state === 'queued' ? '補正の順番待ち…' : `誤字を補正中 ${proofPct}%`}
+            </span>
+            <button className="btn" onClick={() => void cancelJob(work.id)}>
+              中止
+            </button>
+          </>
+        ) : (
+          proof && (
+            <>
+              {proof.fixes > 0 && (
+                <span
+                  className="text-toolbar-note"
+                  title="文字起こしの見た目の似た字の取り違え（ブ↔プ など）を LLM が直した数。直した語には薄い下線が付き、クリックすると元に戻せます"
+                >
+                  補正 {proof.fixes} か所
+                </span>
+              )}
+              {proof.checked < proof.total && (
+                <button
+                  className="btn"
+                  onClick={() => void proofreadAll()}
+                  disabled={!llmReady}
+                  title={
+                    llmReady
+                      ? `まだ見ていない ${proof.total - proof.checked} 段落の、見た目の似た字の取り違え（ブ↔プ・ッ↔ツ・ー↔一 など）を LLM が文脈から見つけて直します。候補の確認はいりません（直した語は下線から元に戻せます）`
+                      : 'モデルを読み込むと誤字を補正できます'
+                  }
+                >
+                  誤字を補正
+                </button>
+              )}
+            </>
+          )
+        ))}
         {isEnglish && (translation !== 'off' || trJob) && (
           <>
             <span
@@ -2188,6 +2386,30 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+                {fixMenu && (
+                  <div
+                    ref={fixMenuRef}
+                    className="ex-popup hl-menu"
+                    role="dialog"
+                    aria-label="誤字の補正"
+                    style={
+                      fixMenu.above
+                        ? { left: fixMenu.x, top: 'auto', bottom: fixMenu.y, width: HL_MENU_WIDTH }
+                        : { left: fixMenu.x, top: fixMenu.y, width: HL_MENU_WIDTH }
+                    }
+                  >
+                    <div className="hl-menu-row">
+                      <span className="fix-menu-text">
+                        {fixMenu.fix.from} → {fixMenu.fix.to}
+                      </span>
+                      <span className="text-toolbar-spacer" />
+                      <button className="btn" onClick={() => void revertFix()} title="文字起こしのままの字に戻します">
+                        元に戻す
+                      </button>
+                    </div>
+                    <div className="fix-menu-note">文字起こしの誤字と判断して、自動で直しました</div>
                   </div>
                 )}
                 {dict && (

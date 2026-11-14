@@ -208,3 +208,31 @@ export function rangeInBlock(el: Element, p: HighlightPart): Range | null {
   r.setEnd(e[0], e[1])
   return r
 }
+
+/**
+ * 誤字の補正(ブロックの md の pos にある to。proofread.py)に当たる DOM の Range。md の中で pos より前にある
+ * 同じ文字列の数を数え、描いた本文の中の同じ番目の出現を選ぶ(Markdown の記号・ルビの読みで位置がずれるため)。
+ */
+export function fixRange(el: Element, md: string, fix: { pos: number; to: string }): Range | null {
+  if (!fix.to) return null
+  const nodes = textNodes(el)
+  const text = nodes.map((n) => n.data).join('')
+  const before = md.slice(0, fix.pos).replace(/<rt>[^<]*<\/rt>/g, '')
+  let nth = 0
+  for (let i = before.indexOf(fix.to); i >= 0; i = before.indexOf(fix.to, i + fix.to.length)) nth++
+  let pos = -1
+  for (let i = text.indexOf(fix.to), k = 0; i >= 0; i = text.indexOf(fix.to, i + fix.to.length), k++) {
+    if (k === nth) {
+      pos = i
+      break
+    }
+  }
+  if (pos < 0) return null
+  const s = pointAt(nodes, pos, false)
+  const e = pointAt(nodes, pos + fix.to.length, true)
+  if (!s || !e) return null
+  const r = document.createRange()
+  r.setStart(s[0], s[1])
+  r.setEnd(e[0], e[1])
+  return r
+}

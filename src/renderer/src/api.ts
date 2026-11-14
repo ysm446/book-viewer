@@ -416,7 +416,7 @@ export async function removeWorkTag(root: string, workId: string, name: string):
 }
 
 /** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引 / 英語の本の日本語訳)。 */
-export type JobKind = 'transcribe' | 'structure' | 'index' | 'translate' | 'vectors'
+export type JobKind = 'transcribe' | 'proofread' | 'structure' | 'index' | 'translate' | 'vectors'
 
 export interface QueueCurrent {
   work_id: string
@@ -458,6 +458,45 @@ export interface ContentBlock {
   md: string
   /** 章の始まり(表示で改ページする) */
   break?: boolean
+  /** 誤字の補正(日本語の本)。pos は md の中の位置、from が文字起こしのまま、to が直したもの(同じ字数) */
+  fixes?: TextFix[]
+}
+
+/** 誤字の補正 1 か所。 */
+export interface TextFix {
+  pos: number
+  from: string
+  to: string
+}
+
+/** 誤字の補正の状況(対象の段落数・LLM が読んだ段落数・当てている補正の数)。 */
+export interface ProofreadSummary {
+  total: number
+  checked: number
+  fixes: number
+}
+
+export async function getProofread(root: string, workId: string): Promise<ProofreadSummary> {
+  return jsonFetch(`/works/${workId}/proofread?root=${encodeURIComponent(root)}`)
+}
+
+/** 誤字の補正をジョブキューに積む(LLM の読み込みが必要)。redo で読んだ段落も読み直す。 */
+export async function enqueueProofread(root: string, workId: string, redo = false): Promise<JobQueue> {
+  return jsonFetch(`/works/${workId}/proofread`, { method: 'POST', body: JSON.stringify({ root, redo }) })
+}
+
+/** 補正 1 か所を元に戻す(off)・当て直す。block は content のブロックの添字。 */
+export async function setProofreadFix(
+  root: string,
+  workId: string,
+  block: number,
+  pos: number,
+  off: boolean
+): Promise<void> {
+  await jsonFetch(`/works/${workId}/proofread/fix`, {
+    method: 'PUT',
+    body: JSON.stringify({ root, block, pos, off })
+  })
 }
 
 /** アプリ用の本文(原本のページ割りから切り離した、ひと続きの本文)。 */
