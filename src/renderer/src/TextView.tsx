@@ -468,7 +468,8 @@ interface Layout {
   screens: number
 }
 
-type Pending = 'first' | 'last' | { block: number } | null
+/** 次に測ったときに出す場所。keep は位置を覚え直さずにそのブロックへ戻る(本文の作り直し)。 */
+type Pending = 'first' | 'last' | { block: number; keep?: boolean } | null
 
 /**
  * リーダーのテキスト表示。アプリ用の本文(原本のページ割りから切り離したブロックの並び)を、
@@ -901,8 +902,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   }, [size, vertical, columns, fontSize])
 
   // 画面が決まったら、先頭のブロックを覚え、原本のどのページまで進んだかをリーダーへ伝える。
+  // keep を渡すと先頭のブロックを覚え直さず、そのブロックを読んでいる場所のままにする(組み直し)。
+  // 組み直すたびに「画面で最初に始まるブロック」を覚え直すと、同じ画面に入った前のブロックへ寄っていき、
+  // ウィンドウの大きさを変える間(何十回も組み直す)に読んでいた場所から大きく戻ってしまう。
   const settle = useCallback(
-    (scr: number): void => {
+    (scr: number, keep: number | null = null): void => {
       const l = layout.current
       if (!l || !blocks) return
       const s = sections[l.sec]
@@ -920,8 +924,14 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       // 前の画面から続く段落だけの画面では、その段落を先頭とみなす。
       const head = firstStart >= 0 ? firstStart : covering
       if (head < 0) return
-      anchor.current = s.start + head
-      anchorKey.current = keyOfBlock(blocks, s.start + head)
+      if (keep !== null && keep >= 0 && keep < blocks.length) {
+        // 位置の記録(anchorKey)はそのまま。本文の作り直しで添字が変わっても、記録から探し直せる。
+        anchor.current = keep
+        if (!anchorKey.current) anchorKey.current = keyOfBlock(blocks, keep)
+      } else {
+        anchor.current = s.start + head
+        anchorKey.current = keyOfBlock(blocks, s.start + head)
+      }
       const reached = blocks[s.start + (lastStart >= 0 ? lastStart : head)].page
       const atEnd = l.sec === sections.length - 1 && scr === l.screens - 1
       const completed = atEnd && (content?.pages_done ?? 0) >= work.page_count
@@ -954,8 +964,14 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   useEffect(() => {
     if (!blocks || blocks.length === 0) return
     const key = anchorKey.current
-    if (key) jumpToBlock(blockOfKey(blocks, key))
-  }, [blocks, jumpToBlock])
+    if (!key) return
+    const index = blockOfKey(blocks, key)
+    const s = sections.findIndex((x) => index >= x.start && index < x.end)
+    if (s < 0) return
+    pending.current = { block: index, keep: true }
+    setSec(s)
+    setTick((t) => t + 1)
+  }, [blocks, sections])
 
   // 原本のページが外から変わった(目次・しおり・スクラバー)ら、そのページの本文へ移動する。
   useEffect(() => {
@@ -1100,14 +1116,21 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     const p = pending.current
     pending.current = null
     let target = 0
+    // 移動ではなく組み直し(ウィンドウの大きさ・文字・図の読み込み・本文の作り直し)なら、読んでいたブロックのまま
+    let keep: number | null = null
     if (p === 'last') target = count - 1
-    else if (p && p !== 'first') target = starts[p.block - s.start] ?? 0
-    else if (p === null && anchor.current !== null) target = starts[anchor.current - s.start] ?? 0
+    else if (p && p !== 'first') {
+      target = starts[p.block - s.start] ?? 0
+      if (p.keep) keep = p.block
+    } else if (p === null && anchor.current !== null) {
+      target = starts[anchor.current - s.start] ?? 0
+      keep = anchor.current
+    }
     target = Math.min(Math.max(target, 0), count - 1)
     screenRef.current = target
     setScreens(count)
     setScreen(target)
-    settle(target)
+    settle(target, keep)
   }, [sections, sec, geo, vertical, fontSize, weight, font, tick, showStage, settle, blocks, work.id, body])
 
   // ---- 辞書(英語の本。単語にマウスを乗せて引く) ----
