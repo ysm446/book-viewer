@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-09-21 17:59
-更新日時: 2026-11-14 20:02
+更新日時: 2026-11-14 22:33
 
 ## 現在地
 
@@ -116,6 +116,8 @@ M0・M1 完了、M2〜M6 の最初の版まで(マイルストーンは [plan.md
    TocPanel・ReaderChat で別々に走っている(App の `queue` を渡して一本にできる)。Electron 33 は EOL(45 が最新)。
    `sandbox: false` は不要(preload は contextBridge / ipcRenderer / webUtils だけ)。llama-server・Python が
    親の異常終了で孤児になる(Job Object か親 PID の監視)。`Settings.tsx` の `llm` の更新が全体のスナップショットを送る。
+4. アイデア(未着手): 読書ノート(LLM で年表・人物・用語を抜き出して本フォルダの md にまとめる)。
+   方針の案は [plan.md](plan.md) の「アイデア(未着手)」。
 
 - 2026-09-21: コードレビューでの修正。API の合言葉(`BOOK_VIEWER_TOKEN`)、バックエンドの停止検知と再起動、
   スキャン時の索引の差分更新(`search_meta`)、ジョブ中の改名・削除の拒否(409)、macOS zip の `__MACOSX` 除外、

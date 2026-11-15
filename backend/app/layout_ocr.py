@@ -54,6 +54,11 @@ _RUBY_TAG_RE = re.compile(r"<rt>.*?</rt>|</?ruby>")
 # 縦書きの行に混ざった英字(1 字ずつ立てて並べた略語など)は、YomiToku が崩して読む。
 # 確信度が低く英字を含む縦書きの行は、Vision LLM に行の画像を見せて読み直す(_reread_vertical)。
 _LATIN_RE = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]")
+# 読み直すのは確信度がこれ未満の行だけ。立てた英字を崩した行はほぼ 0.0 になる。
+# 技術書(THE NVIDIA WAY、125 ページ)では、0.6 未満で読み直すと 380 行(ほぼ毎ページ)が LLM に回り、
+# そのうち英字が直ったのは 0.1 未満の 78 行中 69 行に集中していた。0.1 以上は横組みの略語(CEO・AI)が
+# 入っただけの行が大半で、LLM がカタカナを英語に替える(ウィンドウズ → Windows)などの書き換えも混ざる。
+_REREAD_SCORE = 0.1
 # 読み直しを採るのは、日本語の部分(英数字・記号以外)がこれ以上もとの読みと一致するとき
 # (LLM が行を書き換えたり、別の行を読んだりしたものを捨てる)。
 _REREAD_KEEP_JA = 0.7
@@ -375,7 +380,7 @@ def _reread_vertical(
         old = (w.get("content") or "").strip()
         if (
             w.get("direction") != "vertical"
-            or float(w.get("rec_score", 1.0)) >= _LOW_SCORE
+            or float(w.get("rec_score", 1.0)) >= _REREAD_SCORE
             or len(old) < 2
             or not _LATIN_RE.search(old)
         ):
