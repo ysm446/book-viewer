@@ -632,6 +632,8 @@ export async function lookupWord(word: string): Promise<DictionaryResult> {
 export interface LowLine {
   text: string
   score: number
+  /** Vision LLM で読み直した行のとき、OCR のもとの読み */
+  reread?: string
 }
 
 /** ページの本文と補助情報。 */

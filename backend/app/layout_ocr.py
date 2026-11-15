@@ -11,9 +11,11 @@ YomiToku のモデルは CC BY-NC-SA 4.0(非商用)。
 
 from __future__ import annotations
 
+import difflib
 import re
 import threading
 from dataclasses import dataclass
+from typing import Callable
 
 _analyzer = None
 _lock = threading.Lock()
@@ -49,6 +51,12 @@ _DROP_CAP_RATIO = 1.8
 _KANA_RE = re.compile(r"^[ぁ-ゖァ-ヺー]+$")
 _KANJI_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff々〆ヶ]")
 _RUBY_TAG_RE = re.compile(r"<rt>.*?</rt>|</?ruby>")
+# 縦書きの行に混ざった英字(1 字ずつ立てて並べた略語など)は、YomiToku が崩して読む。
+# 確信度が低く英字を含む縦書きの行は、Vision LLM に行の画像を見せて読み直す(_reread_vertical)。
+_LATIN_RE = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]")
+# 読み直しを採るのは、日本語の部分(英数字・記号以外)がこれ以上もとの読みと一致するとき
+# (LLM が行を書き換えたり、別の行を読んだりしたものを捨てる)。
+_REREAD_KEEP_JA = 0.7
 
 
 @dataclass
@@ -313,6 +321,90 @@ def _split_paragraphs(p: dict, words: list[dict], lang: str = "ja") -> tuple[lis
     return [t for t in paras if t], first_indented
 
 
+def _ja_part(text: str) -> str:
+    """日本語の部分(ASCII・全角英数字・空白・記号を除いた字)。"""
+    return re.sub(r"[\x00-\x7f\uff01-\uff5e\s「」『』（）、。・—―…]", "", text)
+
+
+def plausible_reread(old: str, new: str) -> bool:
+    """LLM の読み直し new を、もとの読み old の代わりに採ってよいか。
+
+    1 行で、長さが極端に変わらず、日本語の部分がほぼそのまま残っているもの。
+    """
+    if not new or new == old or "\n" in new:
+        return False
+    if not (len(old) * 0.5 - 2 <= len(new) <= len(old) * 2 + 4):
+        return False
+    a, b = _ja_part(old), _ja_part(new)
+    if len(a) < 3:
+        return True  # 日本語がほとんど無い行(英字だけの行など)は比べられない
+    return difflib.SequenceMatcher(None, a, b).ratio() >= _REREAD_KEEP_JA
+
+
+_OPEN_MARKS = "「『（(〈《【"
+_CLOSE_MARKS = "」』）)〉》】、。"
+
+
+def _keep_edge_marks(old: str, new: str) -> str:
+    """もとの読みの行頭・行末のカッコや句読点を、読み直しが落としていれば付け直す。
+
+    LLM は行の端のカッコ(「AMBER …」の「 」)を書き落としやすい。
+    """
+    head, tail = old[:1], old[-1:]
+    if head and head in _OPEN_MARKS and head not in new[:2]:
+        new = head + new
+    if tail and tail in _CLOSE_MARKS and tail not in new[-2:]:
+        new = new + tail
+    return new
+
+
+def _reread_vertical(
+    img, words: list[dict], paragraphs: list[dict], reread: Callable[[bytes, str], str | None]
+) -> None:
+    """確信度の低い、英字を含む縦書きの行を、行の画像から読み直して差し替える。
+
+    YomiToku は縦書きの中の横倒しの英文は読めるが、1 字ずつ立てて並べた英字(「AMBER」など)を
+    崩して読む(→ Assia)。行(word)を切り抜いて reread(PNG, もとの読み) に渡し、
+    返ってきた読みが妥当なら word と、それを含む段落の中身を書き換える。
+    差し替えた word には _reread_from(もとの読み)を残す(要確認の一覧に出すため)。
+    """
+    import cv2
+
+    h, w_img = img.shape[:2]
+    for w in words:
+        old = (w.get("content") or "").strip()
+        if (
+            w.get("direction") != "vertical"
+            or float(w.get("rec_score", 1.0)) >= _LOW_SCORE
+            or len(old) < 2
+            or not _LATIN_RE.search(old)
+        ):
+            continue
+        xs = [pt[0] for pt in w["points"]]
+        ys = [pt[1] for pt in w["points"]]
+        # 行の幅(= 字の大きさ)の 1/4 の余白を付けて切り抜く(隣の行やルビをなるべく入れない)
+        m = (max(xs) - min(xs)) * 0.25
+        x1, y1 = max(0, int(min(xs) - m)), max(0, int(min(ys) - m))
+        x2, y2 = min(w_img, int(max(xs) + m)), min(h, int(max(ys) + m))
+        crop = img[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+        ok, buf = cv2.imencode(".png", crop)
+        if not ok:
+            continue
+        new = (reread(buf.tobytes(), old) or "").strip()
+        if new:
+            new = _keep_edge_marks(old, new)
+        if not plausible_reread(old, new):
+            continue
+        w["content"] = new
+        w["_reread_from"] = old
+        for p in paragraphs:
+            if old in (p.get("contents") or ""):
+                p["contents"] = p["contents"].replace(old, new, 1)
+                break
+
+
 def _low_confidence(
     words: list[dict], paragraphs: list[dict], page_char: float, markdown: str
 ) -> list[dict]:
@@ -329,12 +421,22 @@ def _low_confidence(
         if not any(p["box"][0] <= cx <= p["box"][2] and p["box"][1] <= cy <= p["box"][3] for p in paragraphs):
             continue  # 本文以外(柱・ページ表示・図の中の文字)
         if text in markdown:
-            out.append({"text": text, "score": round(score, 2)})
+            item = {"text": text, "score": round(score, 2)}
+            if w.get("_reread_from"):
+                item["reread"] = w["_reread_from"]  # LLM で読み直した行(もとの読み)
+            out.append(item)
     return out
 
 
-def transcribe(image_bytes: bytes, lang: str = "ja") -> tuple[str, list[Figure], list[dict], bool]:
+def transcribe(
+    image_bytes: bytes,
+    lang: str = "ja",
+    reread: Callable[[bytes, str], str | None] | None = None,
+) -> tuple[str, list[Figure], list[dict], bool]:
     """画像を文字起こしし、(Markdown, 図のリスト, 確信度の低い行, 先頭が前ページの続きか) を返す。
+
+    reread を渡すと(日本語の本のとき)、確信度の低い英字まじりの縦書きの行を、
+    行の画像 PNG ともとの読みを渡して読み直させる(_reread_vertical)。
 
     lang は本の言語("ja" / "en")。英語では行を空白でつなぎ、文の終わり・キャプション・
     場面転換・飾り頭文字を英語の本の決まりで扱う。
@@ -362,6 +464,11 @@ def transcribe(image_bytes: bytes, lang: str = "ja") -> tuple[str, list[Figure],
     with _lock:  # モデルはスレッドセーフとは限らないので直列に使う
         result, _, _ = analyzer(img)
     data = result.model_dump()
+    if reread is not None and lang != "en":
+        all_paragraphs = data.get("paragraphs", []) + [
+            p for f in data.get("figures", []) for p in f.get("paragraphs", [])
+        ]
+        _reread_vertical(img, data.get("words", []), all_paragraphs, reread)
 
     # 図と表はどちらも画像として切り抜く(表の Markdown 化は後で)。
     # ただし文字の入った横長の帯(節見出しの飾り枠など)は、図ではなく見出しとして扱う。

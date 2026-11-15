@@ -324,9 +324,52 @@ def _figure_name(index: int, k: int) -> str:
     return f"p{index + 1:04d}-{k + 1}.png"
 
 
-def _transcribe_yomitoku(book_dir: Path, index: int, raw: bytes, lang: str) -> tuple[str, list[dict], bool]:
+_REREAD_LINE = """\
+画像は、縦書きの日本語の本から 1 行だけを切り抜いたものです。上から下へ読みます。
+行の中には、英字を 1 字ずつ縦に立てて並べた部分や、英文を横に寝かせて(時計回りに 90° 回して)
+書いた部分が混ざることがあります。
+画像の文字を一字一句そのまま、横書きの 1 行に書き写してください。英文は普通の向きの英文として書きます。
+出力は書き写した 1 行だけ。説明・引用符の追加・言い換えはしない。
+参考: OCR の読み取りは「{old}」でした(英字の部分が誤っていることが多い)。"""
+
+
+def _line_rereader(base_url: str) -> Callable[[bytes, str], str | None]:
+    """YomiToku が崩した縦書きの行(英字まじり)を、Vision LLM で読み直す関数を返す。
+
+    LLM の呼び出しに失敗したら、そのジョブの残りでは読み直しをやめる(毎行タイムアウトを待たない)。
+    """
+    failed = False
+
+    def reread(png: bytes, old: str) -> str | None:
+        nonlocal failed
+        if failed:
+            return None
+        url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        try:
+            out = llm.chat(
+                base_url,
+                [llm.image_message(_REREAD_LINE.format(old=old), url)],
+                temperature=0.0,
+                think=False,
+                timeout=120.0,
+            )
+        except llm.LlmError:
+            failed = True
+            return None
+        return clean_output(out)
+
+    return reread
+
+
+def _transcribe_yomitoku(
+    book_dir: Path,
+    index: int,
+    raw: bytes,
+    lang: str,
+    reread: Callable[[bytes, str], str | None] | None = None,
+) -> tuple[str, list[dict], bool]:
     """YomiToku で文字起こしし、図を figures/ に保存した (Markdown, 確信度の低い行, 先頭が続きか) を返す。"""
-    markdown, figures, low, head_continues = layout_ocr.transcribe(raw, lang)
+    markdown, figures, low, head_continues = layout_ocr.transcribe(raw, lang, reread)
     fig_dir = book_dir / FIGURES_DIRNAME
     # やり直しのときに前回の図が残らないよう、このページの図を消してから書く。
     for old in fig_dir.glob(f"p{index + 1:04d}-*.png"):
@@ -354,6 +397,7 @@ def transcribe_pages(
     *,
     engine: str = "yomitoku",
     force: bool = False,
+    vision: bool = False,
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """指定ページ(省略時は未処理の全ページ)を文字起こしして保存し、処理したページ数を返す。
@@ -361,6 +405,8 @@ def transcribe_pages(
     force=False なら既に Markdown があるページは飛ばす。force=True でも pages を省略したとき
     (全ページのやり直し)は、手で直したページは飛ばす。ページを指定したときは上書きする。
     engine="vlm" のときは base_url(読み込み済みの llama-server)が必要。
+    engine="yomitoku" でも、画像を渡せるモデル(vision)が読み込まれていれば、
+    崩れた英字まじりの縦書きの行をそのモデルで読み直す。
     """
     if engine not in ENGINES:
         raise TranscribeError(f"未対応の文字起こしエンジンです: {engine}")
@@ -376,6 +422,7 @@ def transcribe_pages(
     total = len(targets)
     lang = row["language"]
     text_prompt = prompt(row["writing_mode"], lang)
+    reread = _line_rereader(base_url) if engine == "yomitoku" and vision and base_url else None
     set_progress(work_id, 0, total, "transcribe")
     try:
         for n, idx in enumerate(targets):
@@ -385,7 +432,7 @@ def transcribe_pages(
             low: list[dict] = []
             head_continues: bool | None = None  # VLM では分からない(本文だけで判断する)
             if engine == "yomitoku":
-                text, low, head_continues = _transcribe_yomitoku(book_dir, idx, raw, lang)
+                text, low, head_continues = _transcribe_yomitoku(book_dir, idx, raw, lang, reread)
             else:
                 out = llm.chat(
                     base_url,

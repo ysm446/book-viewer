@@ -103,6 +103,7 @@ class _State:
     model_name: str | None = None
     base_url: str | None = None
     ctx_size: int | None = None  # 起動時のコンテキスト長(本文をどれだけ一度に渡せるかの目安)
+    vision: bool = False  # mmproj 付きで起動したか(画像を渡せるか)
     log = None  # type: ignore[assignment]
 
 
@@ -125,6 +126,7 @@ def status() -> dict:
             _state.proc = None
             _state.model_name = None
             _state.base_url = None
+            _state.vision = False
             if _state.log is not None:
                 try:
                     _state.log.close()
@@ -137,6 +139,7 @@ def status() -> dict:
             "model": _state.model_name,
             "base_url": _state.base_url,
             "ctx_size": _state.ctx_size if running else None,
+            "vision": running and _state.vision,
         }
 
 
@@ -228,6 +231,7 @@ def _load(
         _state.model_name = Path(model_path).stem
         _state.base_url = base_url
         _state.ctx_size = ctx_size
+        _state.vision = bool(mmproj_path)
         proc = _state.proc
 
     deadline = time.time() + timeout
@@ -268,6 +272,7 @@ def stop() -> dict:
         _state.proc = None
         _state.model_name = None
         _state.base_url = None
+        _state.vision = False
         if _state.log is not None:
             try:
                 _state.log.close()

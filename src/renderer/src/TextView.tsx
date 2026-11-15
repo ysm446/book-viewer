@@ -2176,7 +2176,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                     key={i}
                     className="text-edit-low-item"
                     onClick={() => selectLow(l.text)}
-                    title={`確信度 ${Math.round(l.score * 100)}%`}
+                    title={
+                      l.reread
+                        ? `LLM で読み直し（OCR の読み: ${l.reread}）`
+                        : `確信度 ${Math.round(l.score * 100)}%`
+                    }
                   >
                     {l.text}
                   </button>
