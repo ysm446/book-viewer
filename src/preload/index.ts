@@ -19,6 +19,7 @@ export interface AppSettings {
   recentRoots: string[]
   lastWorkId: string | null
   transcribeEngine: 'yomitoku' | 'vlm'
+  transcribeReread: boolean
   llm: {
     baseUrl: string
     model: string

@@ -50,6 +50,7 @@ class TranscribeRequest(BaseModel):
     pages: list[int] | None = None  # 省略時は未処理の全ページ
     force: bool = False  # 既存の Markdown も作り直す
     engine: str = "yomitoku"  # 'yomitoku' / 'vlm'
+    reread: bool = True  # 英字まじりの縦書きの行を Vision LLM で読み直すか(yomitoku のとき)
 
 
 @router.post("/{work_id}/transcribe")
@@ -60,7 +61,13 @@ def enqueue_transcribe(work_id: str, body: TranscribeRequest) -> dict:
         raise HTTPException(status_code=400, detail="engine は yomitoku / vlm のいずれか")
     try:
         return jobs.enqueue(
-            body.root, work_id, "transcribe", pages=body.pages, force=body.force, engine=body.engine
+            body.root,
+            work_id,
+            "transcribe",
+            pages=body.pages,
+            force=body.force,
+            engine=body.engine,
+            extra={"reread": body.reread},
         )
     except jobs.NotFound as e:
         raise HTTPException(status_code=404, detail=str(e))

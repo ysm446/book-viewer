@@ -1274,6 +1274,7 @@ export function Reader({
             theme={textTheme}
             animate={animate}
             engine={settings.transcribeEngine ?? 'yomitoku'}
+            reread={settings.transcribeReread ?? true}
             translation={language === 'en' ? translation : 'off'}
             pairUnit={pairUnit}
             trStyle={trStyle}

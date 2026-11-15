@@ -794,6 +794,31 @@ export function Settings({ settings, onChange, onClose }: SettingsProps): JSX.El
                 ))}
               </div>
             </div>
+            <div className="settings-row">
+              <div className="settings-label">
+                崩れた英字の行を LLM で読み直す
+                <span className="settings-desc">
+                  縦書きの行の中で 1 字ずつ立てて並べた英字（「AMBER」など）は YomiToku が崩して読みやすいため、
+                  その行だけを画像を読める LLM（mmproj 付き）で読み直します。モデル未読み込みのときは読み直しません
+                </span>
+              </div>
+              <label
+                className="switch"
+                title={
+                  (settings.transcribeEngine ?? 'yomitoku') === 'vlm'
+                    ? 'エンジンが YomiToku のときだけ使えます'
+                    : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.transcribeReread ?? true}
+                  disabled={(settings.transcribeEngine ?? 'yomitoku') === 'vlm'}
+                  onChange={(e) => onChange({ transcribeReread: e.target.checked })}
+                />
+                <span className="switch-track" />
+              </label>
+            </div>
           </section>
               </>
             )}

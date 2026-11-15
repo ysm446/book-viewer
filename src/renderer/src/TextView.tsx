@@ -74,6 +74,8 @@ interface Props {
   animate: boolean
   /** 文字起こしのエンジン(設定) */
   engine: TranscribeEngine
+  /** 英字まじりの縦書きの行を LLM で読み直すか(設定) */
+  reread: boolean
   /** 英語の本の訳文の出し方(原文だけ / 訳文だけ / 対訳)。日本語の本は off */
   translation: TranslationMode
   /** 対訳で原文と訳文を並べる単位 */
@@ -492,6 +494,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     theme,
     animate,
     engine,
+    reread,
     translation,
     pairUnit,
     trStyle,
@@ -790,7 +793,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   async function transcribe(target?: number[], force = false): Promise<void> {
     setError(null)
     try {
-      await enqueueTranscribe(root, work.id, { pages: target, force, engine })
+      await enqueueTranscribe(root, work.id, { pages: target, force, engine, reread })
       setJob({ state: 'queued', current: 0, total: 0 })
       watch()
     } catch (e) {

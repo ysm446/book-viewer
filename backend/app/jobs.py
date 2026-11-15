@@ -167,7 +167,8 @@ def _run(job: dict) -> None:
             job.get("pages"),
             engine=job.get("engine", "yomitoku"),
             force=job.get("force", False),
-            vision=bool(st.get("vision")),
+            # 崩れた英字の行の読み直しは、設定で ON(extra["reread"])かつ画像を読めるモデルのときだけ
+            vision=bool(st.get("vision")) and (job.get("extra") or {}).get("reread", True),
             cancel_check=cancel_check,
         )
     elif job["kind"] == "proofread":

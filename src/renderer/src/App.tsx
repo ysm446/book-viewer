@@ -358,7 +358,12 @@ export function App(): JSX.Element {
     setMenuFor(null)
     if (!root) return
     try {
-      setQueue(await enqueueTranscribe(root, w.id, { engine: settings?.transcribeEngine }))
+      setQueue(
+        await enqueueTranscribe(root, w.id, {
+          engine: settings?.transcribeEngine,
+          reread: settings?.transcribeReread
+        })
+      )
     } catch (e) {
       notify(`文字起こしを開始できませんでした: ${(e as Error).message}`, null, true)
     }

@@ -677,7 +677,7 @@ export type TranscribeEngine = 'yomitoku' | 'vlm'
 export async function enqueueTranscribe(
   root: string,
   workId: string,
-  opts?: { pages?: number[]; force?: boolean; engine?: TranscribeEngine }
+  opts?: { pages?: number[]; force?: boolean; engine?: TranscribeEngine; reread?: boolean }
 ): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/transcribe`, {
     method: 'POST',
@@ -685,7 +685,9 @@ export async function enqueueTranscribe(
       root,
       pages: opts?.pages ?? null,
       force: opts?.force ?? false,
-      engine: opts?.engine ?? 'yomitoku'
+      engine: opts?.engine ?? 'yomitoku',
+      // 英字まじりの縦書きの行を LLM で読み直すか(YomiToku のとき。画像を読めるモデルの読み込みが要る)
+      reread: opts?.reread ?? true
     })
   })
 }

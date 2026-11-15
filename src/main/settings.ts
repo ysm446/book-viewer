@@ -25,6 +25,8 @@ export interface AppSettings {
   lastWorkId: string | null
   /** 文字起こしのエンジン(yomitoku: 文書 OCR / vlm: 読み込み済みの Vision LLM) */
   transcribeEngine: 'yomitoku' | 'vlm'
+  /** YomiToku が崩した英字まじりの縦書きの行を、画像を読める LLM で読み直すか */
+  transcribeReread: boolean
   /** ローカル LLM(OpenAI 互換エンドポイント)の設定 */
   llm: {
     /** 例: http://127.0.0.1:8080/v1 */
@@ -113,6 +115,7 @@ const DEFAULTS: AppSettings = {
   recentRoots: [],
   lastWorkId: null,
   transcribeEngine: 'yomitoku',
+  transcribeReread: true,
   llm: {
     baseUrl: 'http://127.0.0.1:8080/v1',
     model: 'local',
