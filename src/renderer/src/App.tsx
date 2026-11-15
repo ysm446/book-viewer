@@ -39,6 +39,7 @@ import { Reader, type ReaderJump } from './Reader'
 import { SearchResults } from './SearchResults'
 import { Settings } from './Settings'
 import { ModelPicker } from './ModelPicker'
+import { TtsModelBar } from './TtsModelBar'
 import { SystemResourceMonitor } from './SystemResourceMonitor'
 import { Toast, type ToastState } from './Toast'
 import { useStoredFlag } from './useStoredFlag'
@@ -818,6 +819,7 @@ export function App(): JSX.Element {
       onDrop={handleFileDrop}
     >
       <header className="topbar">
+        <div className="topbar-start">
         <button
           className="icon-btn"
           onClick={() => setSidebarOpen((v) => !v)}
@@ -836,7 +838,7 @@ export function App(): JSX.Element {
             再起動
           </button>
         )}
-        <span className="topbar-spacer" />
+        </div>
         {loadingModel ? (
           <span className="model-bar model-bar-loading">
             <span className="model-spinner" aria-hidden="true" />
@@ -907,15 +909,22 @@ export function App(): JSX.Element {
             モデルを読み込む ▾
           </button>
         )}
-        <span className="topbar-spacer" />
-        <button
-          className="icon-btn icon-btn-lg"
-          onClick={() => setShowSettings((v) => !v)}
-          aria-label="設定"
-          title="設定"
-        >
-          ⚙
-        </button>
+        <div className="topbar-end">
+          {settings && status === 'ready' && (
+            <TtsModelBar
+              key={`${settings.tts.serverDir}\n${settings.tts.modelsDir}\n${settings.tts.baseUrl}`}
+              opts={settings.tts}
+            />
+          )}
+          <button
+            className="icon-btn icon-btn-lg"
+            onClick={() => setShowSettings((v) => !v)}
+            aria-label="設定"
+            title="設定"
+          >
+            ⚙
+          </button>
+        </div>
       </header>
 
       {showModelPicker && (

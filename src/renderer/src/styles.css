@@ -289,15 +289,26 @@ input[type='checkbox']:focus-visible {
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 6px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.topbar-spacer {
-  flex: 1;
+.topbar-start,
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar-start {
+  flex-wrap: wrap;
+}
+.topbar-end {
+  justify-content: flex-end;
 }
 
 .status {
@@ -2914,6 +2925,17 @@ input[type='checkbox']:focus-visible {
 .model-bar:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.tts-model-bar {
+  min-width: 0;
+  white-space: nowrap;
+}
+.tts-model-bar.is-on {
+  background: var(--panel-3);
+  border-color: var(--border-strong);
+}
+.tts-model-bar.is-error {
+  color: var(--danger);
 }
 .model-group {
   display: inline-flex;

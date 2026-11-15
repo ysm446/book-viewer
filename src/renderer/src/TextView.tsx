@@ -27,6 +27,7 @@ import {
   savePageText,
   setProofreadFix,
   startTts,
+  TTS_STOP_EVENT,
   ttsSpeak,
   ttsVoiceOf,
   type BookContent,
@@ -1744,6 +1745,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
               '読み上げサーバー（Irodori-TTS-Server）が入っていません。設定 →「読み上げ」からインストールしてください'
             )
           }
+          if (!s.active || s.gen !== gen) return
           if (!st.starting) st = await startTts(opts)
           while (!st.running) {
             await new Promise((r) => setTimeout(r, 1500))
@@ -1762,6 +1764,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     },
     [stopSpeech, pump, failSpeech]
   )
+
+  useEffect(() => {
+    window.addEventListener(TTS_STOP_EVENT, stopSpeech)
+    return () => window.removeEventListener(TTS_STOP_EVENT, stopSpeech)
+  }, [stopSpeech])
 
   function pauseSpeech(): void {
     const s = sp.current

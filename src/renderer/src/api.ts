@@ -1068,7 +1068,10 @@ export async function startTts(o: TtsServerOpts): Promise<TtsStatus> {
   return jsonFetch('/tts/start', { method: 'POST', body: ttsBody(o) })
 }
 
+export const TTS_STOP_EVENT = 'book-viewer:tts-stop'
+
 export async function stopTts(): Promise<TtsStatus> {
+  window.dispatchEvent(new Event(TTS_STOP_EVENT))
   return jsonFetch('/tts/stop', { method: 'POST' })
 }
 
