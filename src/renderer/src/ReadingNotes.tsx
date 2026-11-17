@@ -7,17 +7,20 @@ interface Props {
   work: Work
   page: number
   llmReady: boolean
+  /** 本文の名前から開いたときに、最初に絞り込む人物 */
+  person?: string
   onClose: () => void
   onJump: (page: number, block: number) => void
 }
 
 /** 保存済みの情報を表示する。本の先まで解析しても API が読書位置で絞る。 */
-export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Props): JSX.Element {
+export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJump }: Props): JSX.Element {
   const [data, setData] = useState<ReadingNotesData | null>(null)
   const [mode, setMode] = useState<'all' | 'chapter' | 'through'>('all')
   const [chapter, setChapter] = useState(0)
   const [graph, setGraph] = useState(false)
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState(person ?? '')
+  const opening = useRef(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [job, setJob] = useState('')
@@ -39,7 +42,9 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
     let timer: ReturnType<typeof setTimeout>
     const generation = ++request.current
     setData(null)
-    setSelected('')
+    // 本文の名前から開いた直後は、その人物の絞り込みを残す。
+    if (!opening.current) setSelected('')
+    opening.current = false
     setEditing(null)
     setMergeTarget('')
     setSplitName('')
@@ -61,6 +66,11 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
     void tick()
     return () => { alive = false; clearTimeout(timer) }
   }, [root, work.id, page, chapter, mode, revision])
+
+  // 絞り込んでいた人物がこの範囲にいなくなったら(統合・読書位置の違いなど)、絞り込みを外す。
+  useEffect(() => {
+    if (data && selected && !data.people.some(p => p.id === selected)) setSelected('')
+  }, [data, selected])
 
   async function action(fn: () => Promise<unknown>): Promise<void> {
     setBusy(true)

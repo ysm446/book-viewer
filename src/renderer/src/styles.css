@@ -1829,6 +1829,12 @@ input[type='checkbox']:focus-visible {
   font-weight: 600;
   color: var(--text);
 }
+/* 人物の紹介の下の「読書ノートで見る」。ポップアップの文字に合わせて詰める。 */
+.person-popup-open {
+  margin-top: 8px;
+  height: 26px;
+  font-size: 12px;
+}
 .dict-note {
   font-size: 11px;
   color: var(--text-dim);

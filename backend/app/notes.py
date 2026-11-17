@@ -478,6 +478,17 @@ def get(root: Path, work_id: str, page: int, chapter: int | None = None, mode='a
             'pages_done': doc.get('pages_done', 0), 'page_count': book.get('page_count', 0)}
 
 
+def names(root: Path, work_id: str, page: int) -> dict:
+    """本文から人物を引くための軽い一覧。読書ノートと同じ絞り込み(読書位置まで)に従う。"""
+    people = []
+    for p in get(root, work_id, page)['people']:
+        if not p['thing']:
+            people.append({'id': p['id'], 'name': p['name'], 'names': [p['name'], *p['aliases']],
+                           'summary': p['summary'], 'count': len(p['facts']),
+                           'facts': [f['description'] for f in p['facts'] if f['kind'] != 'alias'][:3]})
+    return {'people': people}
+
+
 def change(root: Path, work_id: str, changes: dict) -> None:
     folder, book, doc = _source(root, work_id)
     with _lock:

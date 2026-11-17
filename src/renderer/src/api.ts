@@ -467,6 +467,18 @@ export function getNotes(root: string, workId: string, page: number, chapter: nu
 export function enqueueNotes(root: string, workId: string): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/notes`, { method: 'POST', body: JSON.stringify({ root }) })
 }
+/** 本文から引く人物(読書位置までに分かっている分)。names は本文に出るすべての表記。 */
+export interface NotePerson {
+  id: string
+  name: string
+  names: string[]
+  summary: string
+  count: number
+  facts: string[]
+}
+export function getNoteNames(root: string, workId: string, page: number): Promise<{ people: NotePerson[] }> {
+  return jsonFetch(`/works/${workId}/notes/names?${new URLSearchParams({ root, page: String(page) })}`)
+}
 export function summarizePerson(root: string, workId: string, person: string, page: number, chapter: number, mode: string): Promise<{ ok: boolean }> {
   return jsonFetch(`/works/${workId}/notes/summary`, { method: 'POST', body: JSON.stringify({ root, person, page, chapter, mode }) })
 }

@@ -183,6 +183,15 @@ class NotesTest(unittest.TestCase):
             self.assertNotIn('黒衣', chat.call_args.args[1][0]['content'])
         self.assertEqual(taro(3)['summary'], '太郎は学生。')
 
+    def test_names_for_lookup_follow_reading_position(self):
+        early = notes.names(self.folder, 'book', 3)['people']
+        self.assertEqual({p['name'] for p in early}, {'太郎', '花子'})
+        self.assertNotIn('黒衣', json.dumps(early, ensure_ascii=False))
+        late = {p['name']: p for p in notes.names(self.folder, 'book', 9)['people']}
+        self.assertEqual(late['太郎']['names'], ['太郎', '黒衣の男'])
+        notes.change(self.folder, 'book', {'names': ['花子'], 'person': False})
+        self.assertEqual([p['name'] for p in notes.names(self.folder, 'book', 9)['people']], ['太郎'])
+
     def test_edits_survive_resume_and_changed_source_is_not_shown(self):
         original = self.data['units'][self.source[0]['key']]['facts'][0]
         notes.change(self.folder, 'book', {'fact_id': original['id'], 'description': '学生（訂正）'})

@@ -18,6 +18,14 @@ def get_notes(work_id: str, root: str, page: int = Query(0, ge=0),
         raise HTTPException(400, str(e)) from e
 
 
+@router.get('/{work_id}/notes/names')
+def get_names(work_id: str, root: str, page: int = Query(0, ge=0)):
+    try:
+        return notes.names(get_root(root), work_id, page)
+    except (notes.NotesError, transcribe.TranscribeError) as e:
+        raise HTTPException(400, str(e)) from e
+
+
 class Request(BaseModel):
     root: str
 

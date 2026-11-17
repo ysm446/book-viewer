@@ -388,6 +388,12 @@ export function Reader({
   const trStyleName = trStyles.find((s) => s.id === trStyle)?.name ?? '自然な訳'
   // 英語の本の辞書(単語にマウスを乗せて引く)。全部の本で共通。
   const [dictionary, setDictionary] = useStoredFlag('readerDictionary', true)
+  // 本文の人物名にマウスを乗せると、読書ノートの人物の紹介を出す(読書の邪魔にならないよう既定はオフ)。
+  const [peopleLookup, setPeopleLookup] = useStoredFlag('readerPeopleLookup', false)
+  const [notesPerson, setNotesPerson] = useState('')
+  useEffect(() => {
+    if (!showNotes) setNotesPerson('')
+  }, [showNotes])
   // 表示設定で変えたときだけ、この本の設定として保存する(開いただけの本は最後に使った設定に従う)。
   const prefsTouched = useRef(false)
   function changeTextPrefs(patch: Partial<TextPrefs>): void {
@@ -1099,6 +1105,21 @@ export function Reader({
                     ))}
                   </div>
                 </div>
+                <div className="display-item">
+                  <span className="display-label">人物</span>
+                  <div className="seg" role="group" aria-label="人物">
+                    {([true, false] as const).map((on) => (
+                      <button
+                        key={String(on)}
+                        className={`seg-btn ${peopleLookup === on ? 'seg-active' : ''}`}
+                        onClick={() => setPeopleLookup(on)}
+                        title="本文の人物名にマウスを乗せると、読書ノートの人物の紹介を出します（読んだところまでの情報）"
+                      >
+                        {on ? 'オン' : 'オフ'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
             {activeDisplayTab === 'translation' && (
@@ -1284,7 +1305,7 @@ export function Reader({
         onMouseLeave={() => setScrubberVisible(false)}
       >
         {showNotes && <ReadingNotes root={root} work={work} page={viewPages[viewPages.length - 1]}
-          llmReady={llmReady} onClose={() => setShowNotes(false)} onJump={(p, block) => {
+          llmReady={llmReady} person={notesPerson} onClose={() => setShowNotes(false)} onJump={(p, block) => {
             setShowNotes(false)
             if (viewMode === 'text') setTextJump({ page: p, block, terms: [], seq: Date.now() })
             else jumpTo(p)
@@ -1311,6 +1332,11 @@ export function Reader({
             trStyleName={trStyleName}
             llmReady={llmReady}
             dictionary={dictionary}
+            people={peopleLookup}
+            onOpenPerson={(id) => {
+              setNotesPerson(id)
+              setShowNotes(true)
+            }}
             jump={textJump}
             tts={settings.tts}
             highlights={highlights}

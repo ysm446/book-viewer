@@ -34,6 +34,8 @@ import {
   type BookTranslation,
   type ContentBlock,
   type DictionaryResult,
+  getNoteNames,
+  type NotePerson,
   type Highlight as BookHighlight,
   type HighlightColor,
   type HighlightPart,
@@ -88,6 +90,10 @@ interface Props {
   llmReady: boolean
   /** 英語の本で、単語にマウスを乗せると英和辞書を引く */
   dictionary: boolean
+  /** 本文の人物名にマウスを乗せると、読書ノートの人物の紹介を出す */
+  people: boolean
+  /** 人物の紹介から読書ノートを開く */
+  onOpenPerson: (id: string) => void
   /** 検索結果から開いた箇所。その段落へ移動し、語をハイライトする */
   jump: TextJump | null
   /** 音声読み上げ(Irodori-TTS)のサーバーと声の設定 */
@@ -261,6 +267,48 @@ interface DictPopup {
   above: boolean
   result: DictionaryResult | null
   error: string | null
+  /** 人物名に乗せたとき(辞書ではなく人物の紹介を出す) */
+  person?: NotePerson
+}
+
+/** 片仮名・英字の名前は、より長い語の一部(エンジニアの「エン」)を人物にしない。 */
+const KANA_RE = /[ァ-ヶー]/
+const LATIN_RE = /[A-Za-z]/
+function standsAlone(text: string, start: number, end: number): boolean {
+  for (const re of [KANA_RE, LATIN_RE]) {
+    if (re.test(text[start]) && start > 0 && re.test(text[start - 1])) return false
+    if (re.test(text[end - 1]) && end < text.length && re.test(text[end])) return false
+  }
+  return true
+}
+
+/** 画面座標の下にある人物名と、その範囲。names は長い表記から順に並べた [表記, 人物]。 */
+function personAt(
+  flow: HTMLElement,
+  x: number,
+  y: number,
+  names: [string, NotePerson][]
+): { word: string; rect: DOMRect; range: Range; person: NotePerson } | null {
+  const caret = document.caretRangeFromPoint?.(x, y)
+  const node = caret?.startContainer
+  if (!caret || !node || node.nodeType !== Node.TEXT_NODE) return null
+  if (!node.parentElement || !flow.contains(node.parentElement)) return null
+  const text = node.textContent ?? ''
+  const at = caret.startOffset
+  for (const [name, person] of names) {
+    for (let i = text.indexOf(name, Math.max(0, at - name.length)); i >= 0 && i <= at; i = text.indexOf(name, i + 1)) {
+      if (!standsAlone(text, i, i + name.length)) continue
+      const r = document.createRange()
+      r.setStart(node, i)
+      r.setEnd(node, i + name.length)
+      // 行をまたぐ名前もあるので、行ごとの矩形で本当に名前の上かを確かめる
+      const rect = Array.from(r.getClientRects()).find(
+        (b) => x >= b.left - 1 && x <= b.right + 1 && y >= b.top - 1 && y <= b.bottom + 1
+      )
+      if (rect) return { word: name, rect, range: r, person }
+    }
+  }
+  return null
 }
 
 /** 英単語の字(語の途中のアポストロフィを含む。ハイフンでは分ける)。 */
@@ -502,6 +550,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
     trStyleName,
     llmReady,
     dictionary,
+    people,
+    onOpenPerson,
     jump,
     tts,
     highlights,
@@ -1147,13 +1197,39 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   const overPopup = useRef(false)
   const dictEnabled = dictionary && isEnglish && translation !== 'ja'
 
+  // 人物(読書ノート)。読んでいるページまでに分かっている人物だけを取り直す。
+  const [personNames, setPersonNames] = useState<[string, NotePerson][]>([])
+  useEffect(() => {
+    if (!people) {
+      setPersonNames([])
+      return
+    }
+    let alive = true
+    const timer = window.setTimeout(() => {
+      getNoteNames(root, work.id, page)
+        .then((res) => {
+          if (!alive) return
+          const list = res.people.flatMap((p) => p.names.map((n): [string, NotePerson] => [n, p]))
+          setPersonNames(list.filter(([n]) => n.length >= 2).sort((a, b) => b[0].length - a[0].length))
+        })
+        .catch(() => {
+          if (alive) setPersonNames([])
+        })
+    }, 300)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [people, root, work.id, page])
+  const hoverEnabled = dictEnabled || personNames.length > 0
+
   const closeDict = useCallback((): void => {
     window.clearTimeout(dictTimer.current)
     setDict(null)
   }, [])
 
   function onFlowMouseMove(e: React.MouseEvent): void {
-    if (!dictEnabled) return
+    if (!hoverEnabled) return
     const { clientX: x, clientY: y } = e
     const open = dictRef.current
     if (open) {
@@ -1166,7 +1242,8 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
       const flow = flowRef.current
       const stage = stageRef.current
       if (!flow || !stage) return
-      const hit = wordAt(flow, x, y)
+      const who = personNames.length > 0 ? personAt(flow, x, y, personNames) : null
+      const hit = who ?? (dictEnabled ? wordAt(flow, x, y) : null)
       if (!hit) return
       const box = stage.getBoundingClientRect()
       const above = hit.rect.bottom + 220 > box.bottom
@@ -1179,10 +1256,11 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
         y: above ? box.bottom - hit.rect.top + 4 : hit.rect.bottom - box.top + 4,
         above,
         result: dictCache.current.get(key) ?? null,
-        error: null
+        error: null,
+        person: who?.person
       }
       setDict(popup)
-      if (popup.result) return
+      if (popup.result || popup.person) return
       lookupWord(hit.word)
         .then((res) => {
           dictCache.current.set(key, res)
@@ -1472,7 +1550,7 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
   // ページを送ったら・辞書を切ったら閉じる。Escape でも閉じる。
   useEffect(() => {
     closeDict()
-  }, [screen, sec, dictEnabled, closeDict])
+  }, [screen, sec, hoverEnabled, closeDict])
   useEffect(() => {
     setHlMenu(null)
     setFixMenu(null)
@@ -2466,7 +2544,37 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                       setDict(null)
                     }}
                   >
-                    {dict.error ? (
+                    {dict.person ? (
+                      <div className="dict-entry">
+                        <div className="dict-word">{dict.person.name}</div>
+                        {dict.person.names.length > 1 && (
+                          <div className="dict-note">呼び名: {dict.person.names.slice(1).join(' / ')}</div>
+                        )}
+                        {dict.person.summary ? (
+                          <div>{dict.person.summary}</div>
+                        ) : (
+                          <ul className="dict-meanings">
+                            {dict.person.facts.map((f, i) => (
+                              <li key={i}>{f}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="dict-note">
+                          p.{page + 1} までの情報{dict.person.count > 0 && `（${dict.person.count} 件）`}
+                        </div>
+                        <button
+                          className="btn person-popup-open"
+                          onClick={() => {
+                            const id = dict.person!.id
+                            overPopup.current = false
+                            setDict(null)
+                            onOpenPerson(id)
+                          }}
+                        >
+                          読書ノートで見る
+                        </button>
+                      </div>
+                    ) : dict.error ? (
                       <div className="dict-note">辞書を引けませんでした: {dict.error}</div>
                     ) : !dict.result ? (
                       <div className="dict-note">{dict.word} を引いています…</div>
