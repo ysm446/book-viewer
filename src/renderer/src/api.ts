@@ -440,8 +440,9 @@ export interface ReadingNotesData {
   pages_done: number
   page_count: number
   chapters: { start: number; end: number; title: string }[]
-  /** 情報の多い順。minor(情報が少ない)と thing(会社・集団など人物でない)は初期表示で畳む。 */
-  people: { id: string; name: string; aliases: string[]; facts: NoteFact[]; minor: boolean; thing: boolean }[]
+  /** 情報の多い順。minor(情報が少ない)と thing(会社・集団など人物でない)は初期表示で畳む。
+   *  summary は表示中の情報から作った紹介文(未作成・情報が変わったときは空)。 */
+  people: { id: string; name: string; aliases: string[]; facts: NoteFact[]; minor: boolean; thing: boolean; summary: string }[]
   relations: (NoteFact & { from: string; to: string })[]
 }
 export interface NotesChanges {
@@ -465,6 +466,9 @@ export function getNotes(root: string, workId: string, page: number, chapter: nu
 }
 export function enqueueNotes(root: string, workId: string): Promise<JobQueue> {
   return jsonFetch(`/works/${workId}/notes`, { method: 'POST', body: JSON.stringify({ root }) })
+}
+export function summarizePerson(root: string, workId: string, person: string, page: number, chapter: number, mode: string): Promise<{ ok: boolean }> {
+  return jsonFetch(`/works/${workId}/notes/summary`, { method: 'POST', body: JSON.stringify({ root, person, page, chapter, mode }) })
 }
 export function changeNotes(root: string, workId: string, changes: NotesChanges): Promise<{ ok: boolean }> {
   return jsonFetch(`/works/${workId}/notes`, { method: 'PATCH', body: JSON.stringify({ root, ...changes }) })

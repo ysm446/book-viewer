@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from .. import jobs, notes, transcribe
+from .. import jobs, llm, llm_server, notes, transcribe
 from ..resolve import get_root
 
 router = APIRouter(prefix='/works')
@@ -44,6 +44,25 @@ class Changes(Request):
     apart: bool = False
     clear_apart: bool = False
     restore_hidden: bool = False
+
+
+class Summary(Request):
+    person: str = Field(min_length=1, max_length=64)
+    page: int = Field(0, ge=0)
+    chapter: int | None = None
+    mode: Literal['all', 'chapter', 'through'] = 'all'
+
+
+@router.post('/{work_id}/notes/summary')
+def summarize_person(work_id: str, body: Summary):
+    st = llm_server.status()
+    if not (st['running'] and st['base_url']):
+        raise HTTPException(409, 'モデルが読み込まれていません。')
+    try:
+        notes.summarize(get_root(body.root), work_id, st['base_url'], body.person, body.page, body.chapter, body.mode)
+        return {'ok': True}
+    except (notes.NotesError, transcribe.TranscribeError, llm.LlmError) as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @router.patch('/{work_id}/notes')

@@ -3714,6 +3714,7 @@ input[type='checkbox']:focus-visible {
 .notes-body { padding: 12px 20px; min-width: 0; }
 .notes-person { padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .notes-person h3 { margin: 0 0 8px; font-size: 14px; }
+.notes-summary { margin: 8px 0; font-size: 13px; line-height: 1.55; user-select: text; }
 .notes-fact { padding: 8px 0; line-height: 1.55; user-select: text; }
 .notes-fact blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); color: var(--text-sub); }
 .notes-graph { max-width: 100%; overflow: auto; }

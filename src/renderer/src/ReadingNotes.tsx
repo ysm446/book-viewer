@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { cancelJob, changeNotes, enqueueNotes, getNotes, getQueue,
+import { cancelJob, changeNotes, enqueueNotes, getNotes, getQueue, summarizePerson,
   type ReadingNotesData, type NoteFact, type NotesChanges, type Work } from './api'
 
 interface Props {
@@ -28,6 +28,7 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
   const [mergePage, setMergePage] = useState(page + 1)
   const [showMinor, setShowMinor] = useState(false)
   const [splitName, setSplitName] = useState('')
+  const [writing, setWriting] = useState('')
   const [opened, setOpened] = useState<string[]>([])
   const request = useRef(0)
   const closeButton = useRef<HTMLButtonElement>(null)
@@ -200,6 +201,12 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
           const all = !!selected || opened.includes(p.id) || p.facts.length <= 6
           return <article className="notes-person" key={p.id}>
             <h3>{p.name}{p.thing && <> <span className="text-page-badge">人物以外</span></>}</h3>{p.aliases.length > 0 && <div>呼び名: {p.aliases.join(' / ')}</div>}
+            {p.summary ? <p className="notes-summary">{p.summary}</p>
+              : p.facts.length >= 3 && <div className="notes-actions">
+                <button className="btn" disabled={busy || !llmReady} title={llmReady ? 'いま表示している情報から作ります' : '上部でモデルを読み込むと作れます'}
+                  onClick={() => { setWriting(p.id); void action(() => summarizePerson(root, work.id, p.id, page, chapter, mode)).finally(() => setWriting('')) }}>
+                  {writing === p.id ? '作成中…' : '紹介文を作る'}</button>
+              </div>}
             {facts(all ? p.facts : p.facts.slice(0, 5))}
             {!all && <button className="btn" onClick={() => setOpened(v => [...v, p.id])}>残り {p.facts.length - 5} 件を表示</button>}
           </article>

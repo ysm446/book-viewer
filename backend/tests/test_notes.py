@@ -166,6 +166,23 @@ class NotesTest(unittest.TestCase):
         notes.change(self.folder, 'book', {'names': ['クリス·マラコウスキー', 'クリス'], 'person': True})
         self.assertFalse(people()[0]['thing'])
 
+    def test_summary_uses_visible_facts_and_is_not_shown_earlier(self):
+        def taro(page):
+            return next(p for p in notes.get(self.folder, 'book', page)['people'] if p['name'] == '太郎')
+
+        with patch.object(notes.llm, 'chat', return_value='太郎は学生で、黒衣の男の正体。') as chat:
+            notes.summarize(self.folder, 'book', 'unused', taro(9)['id'], 9)
+            notes.summarize(self.folder, 'book', 'unused', taro(9)['id'], 9)
+            self.assertEqual(chat.call_count, 1)
+            self.assertIn('黒衣の男', chat.call_args.args[1][0]['content'])
+        self.assertIn('正体', taro(9)['summary'])
+        # 先の位置で作った紹介文は、前の位置では出さない。
+        self.assertEqual(taro(3)['summary'], '')
+        with patch.object(notes.llm, 'chat', return_value='太郎は学生。') as chat:
+            notes.summarize(self.folder, 'book', 'unused', taro(3)['id'], 3)
+            self.assertNotIn('黒衣', chat.call_args.args[1][0]['content'])
+        self.assertEqual(taro(3)['summary'], '太郎は学生。')
+
     def test_edits_survive_resume_and_changed_source_is_not_shown(self):
         original = self.data['units'][self.source[0]['key']]['facts'][0]
         notes.change(self.folder, 'book', {'fact_id': original['id'], 'description': '学生（訂正）'})
