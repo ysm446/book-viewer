@@ -30,6 +30,7 @@ import {
 import { HighlightPanel } from './HighlightPanel'
 import { PageScrubber } from './PageScrubber'
 import { ReaderChat } from './ReaderChat'
+import { ReadingNotes } from './ReadingNotes'
 import {
   TextView,
   type HighlightPlace,
@@ -258,6 +259,20 @@ export function Reader({
   jump = null
 }: ReaderProps): JSX.Element {
   const count = work.page_count
+  const [showNotes, setShowNotes] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    // 本文をマウントしたまま覆い、組版・読書位置を保つ。裏側は操作と読み上げ対象から外す。
+    const children = Array.from(stageRef.current?.children ?? [])
+    for (const child of children) {
+      if (!child.classList.contains('notes-page')) {
+        child.toggleAttribute('inert', showNotes)
+        if (showNotes) child.setAttribute('aria-hidden', 'true')
+        else child.removeAttribute('aria-hidden')
+      }
+    }
+    return () => { for (const child of children) { child.removeAttribute('inert'); child.removeAttribute('aria-hidden') } }
+  }, [showNotes])
   const [dirOverride, setDirOverride] = useState<Direction>(
     work.page_direction || 'default'
   )
@@ -682,6 +697,10 @@ export function Reader({
   // キーボード操作。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (showNotes) {
+        if (e.key === 'Escape' && !document.querySelector('[aria-modal="true"]')) setShowNotes(false)
+        return
+      }
       // 入力欄(タグ・チャット・設定モーダル等)へのタイピングでは発火させない。
       const t = e.target as HTMLElement | null
       if (t?.closest('input, textarea, select, [contenteditable]')) return
@@ -725,7 +744,8 @@ export function Reader({
     textVertical,
     fontMenuOpen,
     weightMenuOpen,
-    trStyleMenuOpen
+    trStyleMenuOpen,
+    showNotes
   ])
 
   // F9: 表示中のページ画像を、アーカイブ内の元データのまま保存する(見開きなら 2 枚)。
@@ -801,14 +821,14 @@ export function Reader({
         <div className="seg" role="group" aria-label="表示モード">
           <button
             className={`seg-btn ${viewMode === 'image' ? 'seg-active' : ''}`}
-            onClick={() => setViewMode('image')}
+            onClick={() => { setShowNotes(false); setViewMode('image') }}
             title="スクリーンショットの画像で読む"
           >
             画像
           </button>
           <button
             className={`seg-btn ${viewMode === 'text' ? 'seg-active' : ''}`}
-            onClick={() => setViewMode('text')}
+            onClick={() => { setShowNotes(false); setViewMode('text') }}
             title="文字起こしした本文で読む"
           >
             テキスト
@@ -856,6 +876,8 @@ export function Reader({
         >
           チャット
         </button>
+        <button className={`btn ${showNotes ? 'btn-active' : ''}`} aria-pressed={showNotes}
+          onClick={() => setShowNotes(v => !v)}>読書ノート</button>
         <span className="reader-count" title={viewMode === 'text' ? '原本のページ' : undefined}>
           {viewPages.length === 2 ? `${viewPages[0] + 1}-${lastPageOfSpread + 1}` : viewPages[0] + 1}{' '}
           / {count}
@@ -1253,12 +1275,20 @@ export function Reader({
 
       <div
         className="reader-stage"
+        ref={stageRef}
         onMouseMove={(e) => {
+          if (showNotes) return
           const r = e.currentTarget.getBoundingClientRect()
           setScrubberVisible(e.clientY > r.bottom - 80)
         }}
         onMouseLeave={() => setScrubberVisible(false)}
       >
+        {showNotes && <ReadingNotes root={root} work={work} page={viewPages[viewPages.length - 1]}
+          llmReady={llmReady} onClose={() => setShowNotes(false)} onJump={(p, block) => {
+            setShowNotes(false)
+            if (viewMode === 'text') setTextJump({ page: p, block, terms: [], seq: Date.now() })
+            else jumpTo(p)
+          }} />}
         {viewMode === 'text' ? (
           <TextView
             ref={textRef}

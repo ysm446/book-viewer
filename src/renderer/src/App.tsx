@@ -1416,7 +1416,7 @@ export function App(): JSX.Element {
                           ? '日本語訳: '
                           : queue.current.kind === 'vectors'
                             ? '意味の索引: '
-                            : ''}
+                            : queue.current.kind === 'notes' ? '読書ノート: ' : ''}
                   {queue.current.title}
                 </span>
                 <span className="sbq-bar">

@@ -3688,3 +3688,46 @@ input[type='checkbox']:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ---- 読書ノート ---- */
+.notes-page {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  overflow: auto;
+  text-align: left;
+}
+.notes-toolbar, .notes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.notes-toolbar { padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.notes-toolbar .filter-select { max-width: 100%; }
+.notes-toolbar .seg-active { background: var(--panel-3); color: var(--text); }
+.notes-help { padding: 8px 12px; color: var(--text-sub); font-size: 12px; line-height: 1.5; }
+.notes-body { padding: 12px 20px; min-width: 0; }
+.notes-person { padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.notes-person h3 { margin: 0 0 8px; font-size: 14px; }
+.notes-fact { padding: 8px 0; line-height: 1.55; user-select: text; }
+.notes-fact blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); color: var(--text-sub); }
+.notes-graph { max-width: 100%; overflow: auto; }
+.notes-graph svg { display: block; }
+.notes-graph text { fill: var(--text); text-anchor: middle; font-size: 12px; }
+.notes-edge, .notes-node { cursor: pointer; }
+.notes-edge path { fill: none; stroke: var(--border-strong); stroke-width: 1; }
+.notes-edge .notes-edge-hit { stroke: transparent; stroke-width: 24; }
+.notes-edge:hover path:not(.notes-edge-hit) { stroke: var(--text); stroke-width: 2; }
+.notes-edge text { paint-order: stroke; stroke: var(--bg); stroke-width: 4; }
+.notes-graph marker path { fill: var(--border-strong); }
+.notes-node rect { fill: var(--panel); stroke: var(--border-strong); }
+.notes-node:hover rect, .notes-node:focus-visible rect { fill: var(--panel-3); }
+.notes-node:focus-visible, .notes-edge:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.notes-page-number { width: 80px; }
+.notes-edit { padding: 16px; gap: 12px; }
+.notes-edit textarea { width: 100%; resize: vertical; }

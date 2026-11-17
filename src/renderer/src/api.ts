@@ -416,7 +416,54 @@ export async function removeWorkTag(root: string, workId: string, name: string):
 }
 
 /** ジョブの種類(文字起こし / 章立てと要約 / 本文検索の索引 / 英語の本の日本語訳)。 */
-export type JobKind = 'transcribe' | 'proofread' | 'structure' | 'index' | 'translate' | 'vectors'
+export type JobKind = 'transcribe' | 'proofread' | 'structure' | 'index' | 'translate' | 'vectors' | 'notes'
+
+export interface NoteFact {
+  id: string
+  kind: 'person' | 'relation' | 'alias'
+  subject: string
+  target: string
+  description: string
+  quote: string
+  inferred: boolean
+  edited: boolean
+  page: number
+  revealed: number
+  block: number
+}
+export interface ReadingNotesData {
+  spoiler_guard: boolean
+  total: number
+  checked: number
+  /** LLM による名前の整理(別表記の統合・人物以外の判定)がまだの名前の数。 */
+  untidy: number
+  pages_done: number
+  page_count: number
+  chapters: { start: number; end: number; title: string }[]
+  /** 情報の多い順。minor(情報が少ない)と thing(会社・集団など人物でない)は初期表示で畳む。 */
+  people: { id: string; name: string; aliases: string[]; facts: NoteFact[]; minor: boolean; thing: boolean }[]
+  relations: (NoteFact & { from: string; to: string })[]
+}
+export interface NotesChanges {
+  spoiler_guard?: boolean
+  fact_id?: string
+  description?: string
+  hidden?: boolean
+  merge_subject?: string
+  merge_target?: string
+  revealed?: number
+  clear_merges?: boolean
+  restore_hidden?: boolean
+}
+export function getNotes(root: string, workId: string, page: number, chapter: number, mode: string): Promise<ReadingNotesData> {
+  return jsonFetch(`/works/${workId}/notes?${new URLSearchParams({ root, page: String(page), chapter: String(chapter), mode })}`)
+}
+export function enqueueNotes(root: string, workId: string): Promise<JobQueue> {
+  return jsonFetch(`/works/${workId}/notes`, { method: 'POST', body: JSON.stringify({ root }) })
+}
+export function changeNotes(root: string, workId: string, changes: NotesChanges): Promise<{ ok: boolean }> {
+  return jsonFetch(`/works/${workId}/notes`, { method: 'PATCH', body: JSON.stringify({ root, ...changes }) })
+}
 
 export interface QueueCurrent {
   work_id: string

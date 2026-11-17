@@ -18,6 +18,7 @@ from .routers import (
     library,
     llm,
     pages,
+    notes,
     proofread,
     queue,
     roots,
@@ -70,6 +71,7 @@ app.include_router(works.router, prefix="/api")
 app.include_router(pages.router, prefix="/api")
 app.include_router(text.router, prefix="/api")
 app.include_router(proofread.router, prefix="/api")
+app.include_router(notes.router, prefix="/api")
 app.include_router(structure.router, prefix="/api")
 app.include_router(translate.router, prefix="/api")
 app.include_router(dictionary.router, prefix="/api")

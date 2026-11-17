@@ -11,10 +11,10 @@ import threading
 import time
 from pathlib import Path
 
-from . import embedding, library, llm_server, progress, proofread, search, structure, transcribe, translate
+from . import embedding, library, llm_server, notes, progress, proofread, search, structure, transcribe, translate
 from .db import connect
 
-KINDS = ("transcribe", "proofread", "structure", "index", "translate", "vectors")
+KINDS = ("transcribe", "proofread", "structure", "index", "translate", "vectors", "notes")
 
 _lock = threading.Lock()
 _cond = threading.Condition(_lock)
@@ -171,6 +171,10 @@ def _run(job: dict) -> None:
             vision=bool(st.get("vision")) and (job.get("extra") or {}).get("reread", True),
             cancel_check=cancel_check,
         )
+    elif job["kind"] == "notes":
+        if not base_url:
+            raise RuntimeError("モデルが読み込まれていません。")
+        notes.run(root, work_id, base_url, model=st.get("model"), cancel_check=cancel_check)
     elif job["kind"] == "proofread":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")
