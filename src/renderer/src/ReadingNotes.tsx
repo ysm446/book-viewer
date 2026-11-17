@@ -32,6 +32,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
   const [showMinor, setShowMinor] = useState(false)
   const [splitName, setSplitName] = useState('')
   const [writing, setWriting] = useState('')
+  const [peek, setPeek] = useState('')
   const [opened, setOpened] = useState<string[]>([])
   const request = useRef(0)
   const closeButton = useRef<HTMLButtonElement>(null)
@@ -117,6 +118,10 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
     return [p.id, { x: size / 2 + Math.cos(angle) * radius, y: size / 2 + Math.sin(angle) * radius }]
   }))
 
+  // 相関図で人物に乗せた・フォーカスしたときに、その場に紹介を出す。
+  const peeked = graph ? people.find(p => p.id === peek) : undefined
+  const peekAt = positions.get(peek)
+
   return <section className="notes-page" aria-label="読書ノート" onKeyDown={e => {
     e.stopPropagation()
     if (e.key === 'Escape' && !editing) onClose()
@@ -173,7 +178,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
       <div className="notes-body">
         {!people.length && <div className="reader-info-empty">{data.checked ? 'この範囲に人物情報はありません。表示範囲を変更できます。' : 'まだ人物情報がありません。「登場人物をまとめる」で作成できます。'}</div>}
         {graph && people.length > 0 && <>
-          <div className="notes-graph"><svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
+          <div className="notes-graph"><div className="notes-graph-stage"><svgwidth={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
             <defs><marker id="notes-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
             {relations.map(r => {
               const a = positions.get(r.from), b = positions.get(r.to)
@@ -197,12 +202,23 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
             {people.map(p => {
               const pos = positions.get(p.id)!
               return <g key={p.id} className="notes-node" role="button" tabIndex={0} aria-label={`${p.name}に絞る`}
+                onMouseEnter={() => setPeek(p.id)} onMouseLeave={() => setPeek('')} onFocus={() => setPeek(p.id)} onBlur={() => setPeek('')}
                 onClick={() => setSelected(p.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
-                <title>{p.name}</title><rect x={pos.x - 80} y={pos.y - 16} width="160" height="32" rx="6" />
+                <rectx={pos.x - 80} y={pos.y - 16} width="160" height="32" rx="6" />
                 <text x={pos.x} y={pos.y} dominantBaseline="middle">{p.name.length > 12 ? p.name.slice(0, 12) + '…' : p.name}</text>
               </g>
             })}
-          </svg></div>
+          </svg>
+            {peeked && peekAt && <div className="ex-popup dict-popup notes-peek" role="tooltip" style={{
+              left: Math.min(Math.max(peekAt.x - 140, 8), size - 288), width: 280,
+              ...(peekAt.y > size - 220 ? { top: 'auto', bottom: size - peekAt.y + 20 } : { top: peekAt.y + 20 }) }}>
+              <div className="dict-word">{peeked.name}</div>
+              {peeked.aliases.length > 0 && <div className="dict-note">呼び名: {peeked.aliases.join(' / ')}</div>}
+              {peeked.summary ? <div>{peeked.summary}</div>
+                : <ul className="dict-meanings">{peeked.facts.filter(f => f.kind !== 'alias').slice(0, 3).map(f => <li key={f.id}>{f.description}</li>)}</ul>}
+              <div className="dict-note">情報 {peeked.facts.length} 件・クリックでこの人物に絞る</div>
+            </div>}
+          </div></div>
           {!relations.length && <div className="reader-info-empty">この範囲に人物間の関係はありません。</div>}
           {relations.map(r => <article className="notes-person" key={r.id}><strong>{r.subject} → {r.target}</strong>{facts([r])}</article>)}
         </>}

@@ -3725,6 +3725,9 @@ input[type='checkbox']:focus-visible {
 .notes-fact blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); color: var(--text-sub); }
 .notes-graph { max-width: 100%; overflow: auto; }
 .notes-graph svg { display: block; }
+/* 相関図の人物の紹介(乗せた・フォーカスした人物の下)。図と一緒にスクロールし、ポインタを奪わない。 */
+.notes-graph-stage { position: relative; width: max-content; }
+.notes-peek { max-height: none; pointer-events: none; }
 .notes-graph text { fill: var(--text); text-anchor: middle; font-size: 12px; }
 .notes-edge, .notes-node { cursor: pointer; }
 .notes-edge path { fill: none; stroke: var(--border-strong); stroke-width: 1; }
