@@ -178,7 +178,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
       <div className="notes-body">
         {!people.length && <div className="reader-info-empty">{data.checked ? 'この範囲に人物情報はありません。表示範囲を変更できます。' : 'まだ人物情報がありません。「登場人物をまとめる」で作成できます。'}</div>}
         {graph && people.length > 0 && <>
-          <div className="notes-graph"><div className="notes-graph-stage"><svgwidth={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
+          <div className="notes-graph"><div className="notes-graph-stage"><svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
             <defs><marker id="notes-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
             {relations.map(r => {
               const a = positions.get(r.from), b = positions.get(r.to)
@@ -204,7 +204,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
               return <g key={p.id} className="notes-node" role="button" tabIndex={0} aria-label={`${p.name}に絞る`}
                 onMouseEnter={() => setPeek(p.id)} onMouseLeave={() => setPeek('')} onFocus={() => setPeek(p.id)} onBlur={() => setPeek('')}
                 onClick={() => setSelected(p.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
-                <rectx={pos.x - 80} y={pos.y - 16} width="160" height="32" rx="6" />
+                <rect x={pos.x - 80} y={pos.y - 16} width="160" height="32" rx="6" />
                 <text x={pos.x} y={pos.y} dominantBaseline="middle">{p.name.length > 12 ? p.name.slice(0, 12) + '…' : p.name}</text>
               </g>
             })}
