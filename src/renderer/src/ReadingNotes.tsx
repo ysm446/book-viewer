@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH, type GraphLayout } from './notesGraph'
 import { cancelJob, changeNotes, enqueueNotes, getNotes, getQueue, summarizePerson,
   type ReadingNotesData, type NoteFact, type NotesChanges, type Work } from './api'
@@ -16,6 +16,180 @@ interface Props {
 
 /** 相関図に、人物を選んでいないときに描く人数(情報の多い順)。 */
 const GRAPH_PEOPLE = 15
+
+/** 相関図の拡大率の範囲と、ボタン 1 回分の倍率。 */
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 2
+const ZOOM_STEP = 1.25
+
+type NotePerson = ReadingNotesData['people'][number]
+
+/**
+ * 相関図。枠の中でスクロールし、つかんで動かせる。Ctrl + ホイール(トラックパッドのピンチ)と
+ * ボタンで拡大縮小する。図が変わると作り直され、等倍・左右の中央から始まる。
+ */
+function RelationGraph({ layout, people, onPick, onJump }: {
+  layout: GraphLayout
+  people: NotePerson[]
+  onPick: (id: string) => void
+  onJump: (relationId: string) => void
+}): JSX.Element {
+  const box = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+  const scaleNow = useRef(1)
+  /** 拡大率を変えたあとも同じ場所が同じ位置に見えるよう、図の上の点と枠の中の位置を覚える */
+  const anchor = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
+  const drag = useRef<{ id: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null)
+  const dragged = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const [peek, setPeek] = useState('')
+
+  /** 図が枠より狭いときは中央に寄るので、その分の左の空き。 */
+  const inset = (el: HTMLElement, s: number): number => Math.max(0, (el.clientWidth - layout.width * s) / 2)
+
+  const zoomTo = (next: number, px?: number, py?: number): void => {
+    const el = box.current
+    if (!el) return
+    const to = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next))
+    const from = scaleNow.current
+    if (to === from) return
+    const ax = px ?? el.clientWidth / 2
+    const ay = py ?? el.clientHeight / 2
+    // 描き直す前に続けて回したときは、最初に覚えた点をそのまま使う(スクロール位置がまだ古い)。
+    const held = anchor.current
+    anchor.current = {
+      x: held ? held.x : (el.scrollLeft + ax - inset(el, from)) / from,
+      y: held ? held.y : (el.scrollTop + ay) / from,
+      px: ax,
+      py: ay
+    }
+    scaleNow.current = to
+    setScale(to)
+  }
+  useLayoutEffect(() => {
+    const el = box.current
+    const a = anchor.current
+    if (!el || !a) return
+    anchor.current = null
+    el.scrollLeft = a.x * scale + inset(el, scale) - a.px
+    el.scrollTop = a.y * scale - a.py
+  }, [scale])
+
+  useLayoutEffect(() => {
+    const el = box.current
+    if (el) el.scrollLeft = (layout.width - el.clientWidth) / 2
+  }, [])
+
+  // React の onWheel は preventDefault できないので、直接つなぐ。
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      const r = el.getBoundingClientRect()
+      zoomTo(scaleNow.current * Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const fit = (): void => {
+    const el = box.current
+    if (!el) return
+    const maxHeight = parseFloat(getComputedStyle(el).maxHeight) || el.clientHeight
+    // スクロールバーの分(9px)を引いて、収まったあとにバーが出ないようにする。
+    zoomTo(Math.min(1, (el.clientWidth - 10) / layout.width, (maxHeight - 10) / layout.height))
+  }
+
+  const endDrag = (): void => {
+    const d = drag.current
+    drag.current = null
+    if (!d?.moved) return
+    setDragging(false)
+    // 動かしたあとのクリックは人物・線に渡さない。クリックが来なかったときのために印は次の周で消す。
+    dragged.current = true
+    setTimeout(() => { dragged.current = false }, 0)
+  }
+
+  const peeked = people.find(p => p.id === peek)
+  const peekNode = layout.nodes.find(n => n.id === peek)
+  const peekAt = peekNode && { x: (peekNode.x + NODE_WIDTH / 2) * scale, y: (peekNode.y + NODE_HEIGHT) * scale }
+  const width = layout.width * scale
+  const height = layout.height * scale
+
+  return <>
+    <div className="notes-graph-tools">
+      <span className="notes-graph-hint">ドラッグで移動 ・ Ctrl + ホイールで拡大縮小</span>
+      <button className="btn" aria-label="縮小" title="縮小" disabled={scale <= ZOOM_MIN} onClick={() => zoomTo(scale / ZOOM_STEP)}>−</button>
+      <button className="btn notes-graph-zoom" title="等倍に戻す" aria-label={`拡大率 ${Math.round(scale * 100)}%。等倍に戻す`}
+        disabled={scale === 1} onClick={() => zoomTo(1)}>{Math.round(scale * 100)}%</button>
+      <button className="btn" aria-label="拡大" title="拡大" disabled={scale >= ZOOM_MAX} onClick={() => zoomTo(scale * ZOOM_STEP)}>＋</button>
+      <button className="btn" title="図の全体が収まる大きさにする" onClick={fit}>全体</button>
+    </div>
+    <div ref={box} className={`notes-graph ${dragging ? 'is-dragging' : ''}`}
+      onPointerDown={e => {
+        if (e.button !== 0) return
+        // スクロールバーの上では動かさない(バーの操作と逆向きに動いてしまう)。
+        const r = e.currentTarget.getBoundingClientRect()
+        if (e.clientX - r.left >= e.currentTarget.clientWidth || e.clientY - r.top >= e.currentTarget.clientHeight) return
+        drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, left: e.currentTarget.scrollLeft, top: e.currentTarget.scrollTop, moved: false }
+      }}
+      onPointerMove={e => {
+        const d = drag.current
+        if (!d || d.id !== e.pointerId) return
+        const dx = e.clientX - d.x
+        const dy = e.clientY - d.y
+        if (!d.moved) {
+          if (Math.abs(dx) + Math.abs(dy) < 5) return
+          d.moved = true
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setDragging(true)
+          setPeek('')
+        }
+        e.currentTarget.scrollLeft = d.left - dx
+        e.currentTarget.scrollTop = d.top - dy
+      }}
+      onPointerUp={endDrag} onPointerCancel={endDrag}
+      onClickCapture={e => { if (dragged.current) { dragged.current = false; e.stopPropagation(); e.preventDefault() } }}>
+      <div className="notes-graph-stage" style={{ width }}>
+        <svg width={width} height={height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
+          <defs><marker id="notes-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+          {layout.edges.map(e => <g key={e.id} className="notes-edge" role="button" tabIndex={0} aria-label={`${e.text}、根拠へ移動`}
+            onClick={() => onJump(e.id)} onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onJump(e.id) } }}>
+            <path className="notes-edge-hit" d={e.path} />
+            <path d={e.path} markerEnd="url(#notes-arrow)" />
+          </g>)}
+          {/* 説明は線の上に載せ、後から描いて他の線に隠れないようにする */}
+          {layout.edges.map(e => e.label && <g key={e.id} className="notes-edge-label" onClick={() => onJump(e.id)}>
+            <rect x={e.label.x - e.label.width / 2} y={e.label.y - 9} width={e.label.width} height="18" />
+            <text x={e.label.x} y={e.label.y} dominantBaseline="middle">{e.text}</text>
+          </g>)}
+          {layout.nodes.map(n => {
+            const p = people.find(x => x.id === n.id)
+            if (!p) return null
+            return <g key={p.id} className="notes-node" role="button" tabIndex={0} aria-label={`${p.name}に絞る`}
+              onMouseEnter={() => setPeek(p.id)} onMouseLeave={() => setPeek('')} onFocus={() => setPeek(p.id)} onBlur={() => setPeek('')}
+              onClick={() => onPick(p.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(p.id) } }}>
+              <rect x={n.x} y={n.y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="6" />
+              <text x={n.x + NODE_WIDTH / 2} y={n.y + NODE_HEIGHT / 2} dominantBaseline="middle">{p.name.length > 12 ? p.name.slice(0, 12) + '…' : p.name}</text>
+            </g>
+          })}
+        </svg>
+        {/* 紹介は拡大率に関係なく同じ大きさで出す */}
+        {peeked && peekAt && !dragging && <div className="ex-popup dict-popup notes-peek" role="tooltip" style={{
+          left: Math.min(Math.max(peekAt.x - 140, 8), Math.max(8, width - 288)), width: 280,
+          ...(peekAt.y > height - 200 && peekAt.y > 240 ? { top: 'auto', bottom: height - peekAt.y + NODE_HEIGHT * scale + 4 } : { top: peekAt.y + 4 }) }}>
+          <div className="dict-word">{peeked.name}</div>
+          {peeked.aliases.length > 0 && <div className="dict-note">呼び名: {peeked.aliases.join(' / ')}</div>}
+          <div className="person-popup-text">{peeked.summary || peeked.facts.filter(f => f.kind !== 'alias').slice(0, 3)
+            .map(f => f.description.replace(/[。.]$/, '') + '。').join('')}</div>
+          <div className="dict-note">情報 {peeked.facts.length} 件・クリックでこの人物に絞る</div>
+        </div>}
+      </div>
+    </div>
+  </>
+}
 
 /** 保存済みの情報を表示する。本の先まで解析しても API が読書位置で絞る。 */
 export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJump }: Props): JSX.Element {
@@ -36,7 +210,6 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
   const [showMinor, setShowMinor] = useState(false)
   const [splitName, setSplitName] = useState('')
   const [writing, setWriting] = useState('')
-  const [peek, setPeek] = useState('')
   const [graphAll, setGraphAll] = useState(false)
   const [layout, setLayout] = useState<GraphLayout | null>(null)
   const [opened, setOpened] = useState<string[]>([])
@@ -142,11 +315,6 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
     if (r) onJump(r.page, r.block)
   }
 
-  // 相関図で人物に乗せた・フォーカスしたときに、その場に紹介を出す。
-  const peeked = graph ? nodes.find(p => p.id === peek) : undefined
-  const peekNode = layout?.nodes.find(n => n.id === peek)
-  const peekAt = peekNode && { x: peekNode.x + NODE_WIDTH / 2, y: peekNode.y + NODE_HEIGHT }
-
   return <section className="notes-page" aria-label="読書ノート" onKeyDown={e => {
     e.stopPropagation()
     if (e.key === 'Escape' && !editing) onClose()
@@ -208,39 +376,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
         {graph && people.length > 0 && <>
           {!drawn.length ? <div className="reader-info-empty">この範囲に人物間の関係はありません。</div>
             : !layout ? <div className="reader-info-empty" role="status">図を配置しています…</div>
-            : <div className="notes-graph"><div className="notes-graph-stage"><svg width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="人物相関図。線の説明と根拠は下の関係一覧でも確認できます">
-              <defs><marker id="notes-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
-              {layout.edges.map(e => <g key={e.id} className="notes-edge" role="button" tabIndex={0} aria-label={`${e.text}、根拠へ移動`}
-                onClick={() => jump(e.id)} onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); jump(e.id) } }}>
-                <path className="notes-edge-hit" d={e.path} />
-                <path d={e.path} markerEnd="url(#notes-arrow)" />
-              </g>)}
-              {/* 説明は線の上に載せ、後から描いて他の線に隠れないようにする */}
-              {layout.edges.map(e => e.label && <g key={e.id} className="notes-edge-label" onClick={() => jump(e.id)}>
-                <rect x={e.label.x - e.label.width / 2} y={e.label.y - 9} width={e.label.width} height="18" />
-                <text x={e.label.x} y={e.label.y} dominantBaseline="middle">{e.text}</text>
-              </g>)}
-              {layout.nodes.map(n => {
-                const p = nodes.find(x => x.id === n.id)
-                if (!p) return null
-                return <g key={p.id} className="notes-node" role="button" tabIndex={0} aria-label={`${p.name}に絞る`}
-                  onMouseEnter={() => setPeek(p.id)} onMouseLeave={() => setPeek('')} onFocus={() => setPeek(p.id)} onBlur={() => setPeek('')}
-                  onClick={() => setSelected(p.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
-                  <rect x={n.x} y={n.y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="6" />
-                  <text x={n.x + NODE_WIDTH / 2} y={n.y + NODE_HEIGHT / 2} dominantBaseline="middle">{p.name.length > 12 ? p.name.slice(0, 12) + '…' : p.name}</text>
-                </g>
-              })}
-            </svg>
-              {peeked && peekAt && <div className="ex-popup dict-popup notes-peek" role="tooltip" style={{
-                left: Math.min(Math.max(peekAt.x - 140, 8), Math.max(8, layout.width - 288)), width: 280,
-                ...(peekAt.y > layout.height - 200 && peekAt.y > 240 ? { top: 'auto', bottom: layout.height - peekAt.y + NODE_HEIGHT + 4 } : { top: peekAt.y + 4 }) }}>
-                <div className="dict-word">{peeked.name}</div>
-                {peeked.aliases.length > 0 && <div className="dict-note">呼び名: {peeked.aliases.join(' / ')}</div>}
-                <div className="person-popup-text">{peeked.summary || peeked.facts.filter(f => f.kind !== 'alias').slice(0, 3)
-                  .map(f => f.description.replace(/[。.]$/, '') + '。').join('')}</div>
-                <div className="dict-note">情報 {peeked.facts.length} 件・クリックでこの人物に絞る</div>
-              </div>}
-            </div></div>}
+            : <RelationGraph layout={layout} people={nodes} onPick={setSelected} onJump={jump} />}
           {drawn.map(r => <article className="notes-person" key={r.id}><strong>{r.subject} → {r.target}</strong>{facts([r])}</article>)}
         </>}
         {!graph && people.map(p => {
