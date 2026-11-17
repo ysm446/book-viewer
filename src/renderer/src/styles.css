@@ -3738,7 +3738,9 @@ input[type='checkbox']:focus-visible {
 .notes-edge path { fill: none; stroke: var(--border-strong); stroke-width: 1; }
 .notes-edge .notes-edge-hit { stroke: transparent; stroke-width: 24; }
 .notes-edge:hover path:not(.notes-edge-hit) { stroke: var(--text); stroke-width: 2; }
-.notes-edge text { paint-order: stroke; stroke: var(--bg); stroke-width: 4; }
+/* 線の説明は線の上に載せる。下地を本文の面の色で塗り、線を途切れさせて読めるようにする。 */
+.notes-edge-label { cursor: pointer; }
+.notes-edge-label rect { fill: var(--bg); }
 .notes-graph marker path { fill: var(--border-strong); }
 .notes-node rect { fill: var(--panel); stroke: var(--border-strong); }
 .notes-node:hover rect, .notes-node:focus-visible rect { fill: var(--panel-3); }
