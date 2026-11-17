@@ -92,8 +92,8 @@ interface Props {
   dictionary: boolean
   /** 本文の人物名にマウスを乗せると、読書ノートの人物の紹介を出す */
   people: boolean
-  /** 人物の紹介から読書ノートを開く */
-  onOpenPerson: (id: string) => void
+  /** 人物の紹介から、その人物に絞った読書ノートを開く */
+  onOpenPerson: (name: string) => void
   /** 検索結果から開いた箇所。その段落へ移動し、語をハイライトする */
   jump: TextJump | null
   /** 音声読み上げ(Irodori-TTS)のサーバーと声の設定 */
@@ -2550,25 +2550,20 @@ export const TextView = forwardRef<TextViewHandle, Props>(function TextView(
                         {dict.person.names.length > 1 && (
                           <div className="dict-note">呼び名: {dict.person.names.slice(1).join(' / ')}</div>
                         )}
-                        {dict.person.summary ? (
-                          <div>{dict.person.summary}</div>
-                        ) : (
-                          <ul className="dict-meanings">
-                            {dict.person.facts.map((f, i) => (
-                              <li key={i}>{f}</li>
-                            ))}
-                          </ul>
-                        )}
+                        {/* 紹介文が無い人物(情報の少ない人物)は、分かっている情報をそのまま紹介として読ませる */}
+                        <div className="person-popup-text">
+                          {dict.person.summary || dict.person.facts.map((f) => f.replace(/[。.]$/, '') + '。').join('')}
+                        </div>
                         <div className="dict-note">
                           p.{page + 1} までの情報{dict.person.count > 0 && `（${dict.person.count} 件）`}
                         </div>
                         <button
                           className="btn person-popup-open"
                           onClick={() => {
-                            const id = dict.person!.id
+                            const name = dict.person!.name
                             overPopup.current = false
                             setDict(null)
-                            onOpenPerson(id)
+                            onOpenPerson(name)
                           }}
                         >
                           読書ノートで見る

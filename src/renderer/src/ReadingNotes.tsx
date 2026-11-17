@@ -7,7 +7,7 @@ interface Props {
   work: Work
   page: number
   llmReady: boolean
-  /** 本文の名前から開いたときに、最初に絞り込む人物 */
+  /** 本文の名前から開いたときに、最初に絞り込む人物の名前(別表記でもよい) */
   person?: string
   onClose: () => void
   onJump: (page: number, block: number) => void
@@ -19,8 +19,8 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
   const [mode, setMode] = useState<'all' | 'chapter' | 'through'>('all')
   const [chapter, setChapter] = useState(0)
   const [graph, setGraph] = useState(false)
-  const [selected, setSelected] = useState(person ?? '')
-  const opening = useRef(true)
+  const [selected, setSelected] = useState('')
+  const wanted = useRef(person ?? '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [job, setJob] = useState('')
@@ -43,9 +43,6 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
     let timer: ReturnType<typeof setTimeout>
     const generation = ++request.current
     setData(null)
-    // 本文の名前から開いた直後は、その人物の絞り込みを残す。
-    if (!opening.current) setSelected('')
-    opening.current = false
     setEditing(null)
     setMergeTarget('')
     setSplitName('')
@@ -68,9 +65,16 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
     return () => { alive = false; clearTimeout(timer) }
   }, [root, work.id, page, chapter, mode, revision])
 
-  // 絞り込んでいた人物がこの範囲にいなくなったら(統合・読書位置の違いなど)、絞り込みを外す。
+  // 本文の名前から開いたときは、最初に届いた一覧からその人物を探して絞り込む。
+  // 絞り込んでいた人物がこの範囲にいなくなったら(統合・表示範囲の変更など)、絞り込みを外す。
   useEffect(() => {
-    if (data && selected && !data.people.some(p => p.id === selected)) setSelected('')
+    if (!data) return
+    if (wanted.current) {
+      const name = wanted.current
+      wanted.current = ''
+      const found = data.people.find(p => p.name === name || p.aliases.includes(name))
+      if (found) setSelected(found.id)
+    } else if (selected && !data.people.some(p => p.id === selected)) setSelected('')
   }, [data, selected])
 
   async function action(fn: () => Promise<unknown>): Promise<void> {
@@ -214,8 +218,8 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
               ...(peekAt.y > size - 220 ? { top: 'auto', bottom: size - peekAt.y + 20 } : { top: peekAt.y + 20 }) }}>
               <div className="dict-word">{peeked.name}</div>
               {peeked.aliases.length > 0 && <div className="dict-note">呼び名: {peeked.aliases.join(' / ')}</div>}
-              {peeked.summary ? <div>{peeked.summary}</div>
-                : <ul className="dict-meanings">{peeked.facts.filter(f => f.kind !== 'alias').slice(0, 3).map(f => <li key={f.id}>{f.description}</li>)}</ul>}
+              <div className="person-popup-text">{peeked.summary || peeked.facts.filter(f => f.kind !== 'alias').slice(0, 3)
+                .map(f => f.description.replace(/[。.]$/, '') + '。').join('')}</div>
               <div className="dict-note">情報 {peeked.facts.length} 件・クリックでこの人物に絞る</div>
             </div>}
           </div></div>

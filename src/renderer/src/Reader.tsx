@@ -1333,8 +1333,8 @@ export function Reader({
             llmReady={llmReady}
             dictionary={dictionary}
             people={peopleLookup}
-            onOpenPerson={(id) => {
-              setNotesPerson(id)
+            onOpenPerson={(name) => {
+              setNotesPerson(name)
               setShowNotes(true)
             }}
             jump={textJump}
