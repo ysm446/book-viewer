@@ -27,6 +27,7 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
   const [mergeTarget, setMergeTarget] = useState('')
   const [mergePage, setMergePage] = useState(page + 1)
   const [showMinor, setShowMinor] = useState(false)
+  const [splitName, setSplitName] = useState('')
   const [opened, setOpened] = useState<string[]>([])
   const request = useRef(0)
   const closeButton = useRef<HTMLButtonElement>(null)
@@ -40,6 +41,7 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
     setSelected('')
     setEditing(null)
     setMergeTarget('')
+    setSplitName('')
     const tick = async (): Promise<void> => {
       try {
         const [next, q] = await Promise.all([getNotes(root, work.id, page, chapter, mode), getQueue()])
@@ -148,7 +150,7 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
         <div>「この章」は章内の描写、「この章まで」は累積した描写です。関係の変化は根拠順に併記します。</div>
       </div>
       <div className="notes-toolbar">
-        <select className="filter-select" aria-label="人物を絞る" value={selected} onChange={e => { setSelected(e.target.value); setMergeTarget('') }}>
+        <select className="filter-select" aria-label="人物を絞る" value={selected} onChange={e => { setSelected(e.target.value); setMergeTarget(''); setSplitName('') }}>
           <option value="">すべての人物</option>
           {data.people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
@@ -214,11 +216,28 @@ export function ReadingNotes({ root, work, page, llmReady, onClose, onJump }: Pr
               onClick={() => change({ merge_subject: chosen.name, merge_target: mergeTarget, revealed: mergePage - 1 })}>統合</button>
           </div>
         </div>}
+        {chosen && <div className="notes-person">
+          <strong>自動の整理を直す</strong>
+          <p>別人の呼び名がまとめられているときは分けられます。会社・集団などは「人物以外」にすると畳まれます。</p>
+          <div className="notes-actions">
+            {chosen.aliases.length > 0 && <>
+              <select className="filter-select" aria-label="分ける呼び名" value={splitName} onChange={e => setSplitName(e.target.value)}>
+                <option value="">呼び名を選択</option>{chosen.aliases.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <button className="btn" disabled={busy || !splitName}
+                onClick={() => { change({ names: [splitName], apart: true }); setSplitName('') }}>別人として分ける</button>
+            </>}
+            <button className="btn" disabled={busy}
+              onClick={() => change({ names: [chosen.name, ...chosen.aliases], person: chosen.thing })}>
+              {chosen.thing ? '人物に戻す' : '人物以外にする'}</button>
+          </div>
+        </div>}
         <div className="notes-actions">
           <button className="btn" disabled={busy} onClick={() => change({ restore_hidden: true })}>除外した情報を戻す</button>
           <button className="btn" disabled={busy} onClick={() => {
             if (window.confirm('手動で行った人物の統合をすべて解除しますか？')) change({ clear_merges: true })
           }}>手動の統合を解除</button>
+          <button className="btn" disabled={busy} onClick={() => change({ clear_apart: true })}>分けた呼び名を戻す</button>
         </div>
       </div>
     </>}

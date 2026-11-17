@@ -454,6 +454,11 @@ export interface NotesChanges {
   revealed?: number
   clear_merges?: boolean
   restore_hidden?: boolean
+  /** 対象の表記。person で人物 / 人物以外を切り替え、apart で自動の統合から外す。 */
+  names?: string[]
+  person?: boolean
+  apart?: boolean
+  clear_apart?: boolean
 }
 export function getNotes(root: string, workId: string, page: number, chapter: number, mode: string): Promise<ReadingNotesData> {
   return jsonFetch(`/works/${workId}/notes?${new URLSearchParams({ root, page: String(page), chapter: String(chapter), mode })}`)

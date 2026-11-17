@@ -146,6 +146,26 @@ class NotesTest(unittest.TestCase):
         # 英字表記が未読のうちは別表記として見せない。
         self.assertNotIn('Jensen', json.dumps(notes.project(data, source, page=0), ensure_ascii=False))
 
+    def test_user_can_split_an_alias_and_mark_a_non_person(self):
+        doc = {'blocks': [{'page': 0, 'kind': 'p', 'md': f'{n}は技術者。'} for n in ('クリス·マラコウスキー', 'クリス')]}
+        source = notes.units(doc)
+        valid = notes.validate_facts({'facts': [fact(n, '技術者', f'{n}は技術者。', unit=i) for i, n in enumerate(
+            ('クリス·マラコウスキー', 'クリス'))]}, source)
+        notes._save(self.folder, {**self.data, 'units': {k: {'facts': v} for k, v in valid.items()}})
+
+        def people():
+            return notes.project(notes._read(self.folder), source, page=0)['people']
+
+        self.assertEqual(len(people()), 1)
+        notes.change(self.folder, 'book', {'names': ['クリス'], 'apart': True})
+        self.assertEqual({p['name'] for p in people()}, {'クリス·マラコウスキー', 'クリス'})
+        notes.change(self.folder, 'book', {'names': ['クリス'], 'person': False})
+        self.assertEqual({p['name']: p['thing'] for p in people()}, {'クリス·マラコウスキー': False, 'クリス': True})
+        notes.change(self.folder, 'book', {'clear_apart': True})
+        self.assertEqual(len(people()), 1)
+        notes.change(self.folder, 'book', {'names': ['クリス·マラコウスキー', 'クリス'], 'person': True})
+        self.assertFalse(people()[0]['thing'])
+
     def test_edits_survive_resume_and_changed_source_is_not_shown(self):
         original = self.data['units'][self.source[0]['key']]['facts'][0]
         notes.change(self.folder, 'book', {'fact_id': original['id'], 'description': '学生（訂正）'})

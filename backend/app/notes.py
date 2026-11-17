@@ -232,6 +232,13 @@ def _same_people(known: list[dict], merges: list[dict], names: dict):
         if a != b:
             parents[b] = a
 
+    # 利用者が「分ける」とした表記は、手動統合以外でまとめない。
+    apart = {n for n, judged in names.items() if judged.get('apart')}
+
+    def auto(a, b):
+        if a not in apart and b not in apart:
+            union(a, b)
+
     parts = {n: _parts(n) for n in first}
     loose = {n: _loose(p) for n, p in parts.items()}
     size = {n: sum(map(len, p)) for n, p in parts.items()}
@@ -239,20 +246,20 @@ def _same_people(known: list[dict], merges: list[dict], names: dict):
     by_key = {}
     for n in first:
         if parts[n]:
-            union(by_key.setdefault(loose[n] if size[n] >= 4 else parts[n], n), n)
+            auto(by_key.setdefault(loose[n] if size[n] >= 4 and n not in apart else (n,), n), n)
     for f in known:
         if f['kind'] != 'alias':
             continue
         a, b = f['subject'], f['target']
         # 推測の別名は誤字程度の違いだけ採用する。
         if not f.get('inferred') or (min(size[a], size[b]) >= 4 and _near(''.join(loose[a]), ''.join(loose[b]))):
-            union(a, b)
+            auto(a, b)
     for m in merges:
         union(m['subject'], m['target'])
     # LLM が同じ人物の別表記と判定した名前。両方の表記が公開済みのときだけまとめる。
     for n, judged in names.items():
         if n in first and judged['same'] in first:
-            union(judged['same'], n)
+            auto(judged['same'], n)
 
     def within(short, full):
         return any(full[i:i + len(short)] == short for i in range(len(full) - len(short) + 1))
@@ -260,14 +267,14 @@ def _same_people(known: list[dict], merges: list[dict], names: dict):
     # 名前の一部だけの表記(ジェンスン)は、それを含む氏名(ジェンスン·フアン)が一人に決まるときだけまとめる。
     # 初出時点で既出の氏名から決め、後から同じ名の別人が出ても過去の判定を変えない。
     for n in sorted(first, key=lambda n: (first[n], n)):
-        if not parts[n]:
+        if not parts[n] or n in apart:
             continue
         group = [m for m in first if root(m) == root(n)]
         if any(len(parts[m]) > len(parts[n]) for m in group):
             continue  # 明記された別名などで氏名が分かっている
         found = {}
         for m in first:
-            if len(parts[m]) > len(parts[n]) and (within(parts[n], parts[m])
+            if m not in apart and len(parts[m]) > len(parts[n]) and (within(parts[n], parts[m])
                                                   or size[n] >= 4 and within(loose[n], loose[m])):
                 r = root(m)
                 found[r] = min(found.get(r, first[m]), first[m])
@@ -373,7 +380,8 @@ def tidy_names(folder: Path, source: list[dict], base_url: str, *, cancel_check=
             raise Cancelled()
         with _lock:
             data = _read(folder)
-            data['names'].update(judged)
+            # 推論中に利用者が直した名前は上書きしない。
+            data['names'].update({n: j for n, j in judged.items() if n not in data['names']})
             _save(folder, data)
 
 
@@ -456,6 +464,16 @@ def change(root: Path, work_id: str, changes: dict) -> None:
             data['merges'].append({'subject': a, 'target': b, 'revealed': reveal, 'edited': True})
         if changes.get('clear_merges'):
             data['merges'] = []
+        for name in changes.get('names') or []:
+            judged = data['names'].setdefault(name, {'person': True, 'same': ''})
+            judged['edited'] = True
+            if changes.get('person') is not None:
+                judged['person'] = changes['person']
+            if changes.get('apart'):
+                judged['apart'] = True
+        if changes.get('clear_apart'):
+            for judged in data['names'].values():
+                judged.pop('apart', None)
         if changes.get('restore_hidden'):
             for edit in data['edits'].values():
                 edit.pop('hidden', None)

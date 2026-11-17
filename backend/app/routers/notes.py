@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -39,6 +39,10 @@ class Changes(Request):
     merge_target: str | None = Field(None, max_length=120)
     revealed: int | None = Field(None, ge=0)
     clear_merges: bool = False
+    names: list[Annotated[str, Field(min_length=1, max_length=120)]] | None = Field(None, max_length=100)
+    person: bool | None = None
+    apart: bool = False
+    clear_apart: bool = False
     restore_hidden: bool = False
 
 
