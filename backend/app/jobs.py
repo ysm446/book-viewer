@@ -174,7 +174,8 @@ def _run(job: dict) -> None:
     elif job["kind"] == "notes":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")
-        notes.run(root, work_id, base_url, model=st.get("model"), cancel_check=cancel_check)
+        notes.run(root, work_id, base_url, model=st.get("model"), cancel_check=cancel_check,
+                  page=(job.get("extra") or {}).get("page"))
     elif job["kind"] == "proofread":
         if not base_url:
             raise RuntimeError("モデルが読み込まれていません。")

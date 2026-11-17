@@ -441,8 +441,9 @@ export interface ReadingNotesData {
   page_count: number
   chapters: { start: number; end: number; title: string }[]
   /** 情報の多い順。minor(情報が少ない)と thing(会社・集団など人物でない)は初期表示で畳む。
-   *  summary は表示中の情報から作った紹介文(未作成・情報が変わったときは空)。 */
-  people: { id: string; name: string; aliases: string[]; facts: NoteFact[]; minor: boolean; thing: boolean; summary: string }[]
+   *  summary は紹介文(未作成なら空)。作った後に情報が増えた・訂正されたときは summary_stale。 */
+  people: { id: string; name: string; aliases: string[]; facts: NoteFact[]; minor: boolean; thing: boolean
+    summary: string; summary_stale: boolean }[]
   relations: (NoteFact & { from: string; to: string })[]
 }
 export interface NotesChanges {
@@ -464,8 +465,8 @@ export interface NotesChanges {
 export function getNotes(root: string, workId: string, page: number, chapter: number, mode: string): Promise<ReadingNotesData> {
   return jsonFetch(`/works/${workId}/notes?${new URLSearchParams({ root, page: String(page), chapter: String(chapter), mode })}`)
 }
-export function enqueueNotes(root: string, workId: string): Promise<JobQueue> {
-  return jsonFetch(`/works/${workId}/notes`, { method: 'POST', body: JSON.stringify({ root }) })
+export function enqueueNotes(root: string, workId: string, page: number): Promise<JobQueue> {
+  return jsonFetch(`/works/${workId}/notes`, { method: 'POST', body: JSON.stringify({ root, page }) })
 }
 /** 本文から引く人物(読書位置までに分かっている分)。names は本文に出るすべての表記。 */
 export interface NotePerson {

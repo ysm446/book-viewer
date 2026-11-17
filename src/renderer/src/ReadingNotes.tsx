@@ -127,7 +127,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
       <button ref={closeButton} className="btn" onClick={onClose}>本文へ戻る</button>
       <span className="text-toolbar-spacer" />
       <button className="btn btn-primary" disabled={busy || !!job || !llmReady || !data?.total}
-        onClick={() => void action(() => enqueueNotes(root, work.id))}>
+        onClick={() => void action(() => enqueueNotes(root, work.id, page))}>
         {data?.checked ? '人物・関係を更新' : '登場人物をまとめる'}
       </button>
       {!!job && <button className="btn" disabled={busy} onClick={() => void action(() => cancelJob(work.id))}>この本の処理を停止</button>}
@@ -153,7 +153,7 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
       <div className="notes-help" role="status">
         {job || `解析済み ${data.checked} / ${data.total} 区間`}
         {' ・ '}{data.spoiler_guard ? `p.${page + 1} までの情報を表示` : '先の内容を含めて表示'}
-        <div>作成・更新は文字起こし済みの本全体が対象です。ローカル LLM を使用します。</div>
+        <div>作成・更新は文字起こし済みの本全体が対象です。ローカル LLM を使用します。主な人物の紹介文も作ります。</div>
         {!llmReady && <div>作成するには上部でモデルを読み込んでください。保存済みのノートはそのまま読めます。</div>}
         {data.pages_done < data.page_count && <div>未文字起こしのページがあります。本文が増えたら更新してください。</div>}
         {data.checked < data.total && data.checked > 0 && <div>追加・変更された本文に未解析の区間があります。</div>}
@@ -211,11 +211,12 @@ export function ReadingNotes({ root, work, page, llmReady, person, onClose, onJu
           const all = !!selected || opened.includes(p.id) || p.facts.length <= 6
           return <article className="notes-person" key={p.id}>
             <h3>{p.name}{p.thing && <> <span className="text-page-badge">人物以外</span></>}</h3>{p.aliases.length > 0 && <div>呼び名: {p.aliases.join(' / ')}</div>}
-            {p.summary ? <p className="notes-summary">{p.summary}</p>
-              : p.facts.length >= 3 && <div className="notes-actions">
+            {p.summary && <p className="notes-summary">{p.summary}</p>}
+            {(p.summary ? p.summary_stale : p.facts.length >= 3) && <div className="notes-actions">
                 <button className="btn" disabled={busy || !llmReady} title={llmReady ? 'いま表示している情報から作ります' : '上部でモデルを読み込むと作れます'}
                   onClick={() => { setWriting(p.id); void action(() => summarizePerson(root, work.id, p.id, page, chapter, mode)).finally(() => setWriting('')) }}>
-                  {writing === p.id ? '作成中…' : '紹介文を作る'}</button>
+                  {writing === p.id ? '作成中…' : p.summary ? '紹介文を作り直す' : '紹介文を作る'}</button>
+                {p.summary && <span className="notes-help">作成後に情報が増えています</span>}
               </div>}
             {facts(all ? p.facts : p.facts.slice(0, 5))}
             {!all && <button className="btn" onClick={() => setOpened(v => [...v, p.id])}>残り {p.facts.length - 5} 件を表示</button>}

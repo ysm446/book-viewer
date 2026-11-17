@@ -135,7 +135,7 @@ def validate_facts(output: dict, batch: list[dict]) -> dict[str, list[dict]]:
     return result
 
 
-def run(root: Path, work_id: str, base_url: str, *, model=None, cancel_check=None) -> None:
+def run(root: Path, work_id: str, base_url: str, *, model=None, cancel_check=None, page=None) -> None:
     folder, _, doc = _source(root, work_id)
     source = units(doc)
     with _lock:
@@ -177,6 +177,8 @@ def run(root: Path, work_id: str, base_url: str, *, model=None, cancel_check=Non
             done += len(batch)
             set_progress(work_id, done, len(source), 'notes')
         tidy_names(folder, source, base_url, cancel_check=cancel_check)
+        if page is not None:
+            summarize_all(root, work_id, base_url, page, cancel_check=cancel_check)
     finally:
         clear_progress(work_id)
 
@@ -422,9 +424,15 @@ def project(data: dict, source: list[dict], *, page: int, start=0, end=None) -> 
     split = any(len(p['facts']) >= 3 for p in ordered if not p['thing'])
     for p in ordered:
         p['minor'] = split and len(p['facts']) < 3
-        # 紹介文は、作ったときと同じ情報が見えているときだけ出す(先の位置で作った文を前の位置で見せない)。
-        saved = data['summaries'].get(p['id'])
-        p['summary'] = saved['text'] if saved and saved['key'] == _summary_key(p) else ''
+        # 紹介文は、その元になった情報がすべて見えているときに出す(先の位置で作った文を前の位置で見せない)。
+        # 作った後に情報が増えた・訂正された文は、古い(stale)と分かるようにして出し続ける。
+        key, ids = _summary_key(p), {f['id'] for f in p['facts']}
+        p['summary'], p['summary_stale'] = '', False
+        for name in [p['name'], *p['aliases']]:  # 代表名が変わっても、前の名前で作った文を使う
+            saved = data['summaries'].get(_key(name))
+            if saved and (saved['key'] == key or (saved.get('ids') and ids.issuperset(saved['ids']))):
+                p['summary'], p['summary_stale'] = saved['text'], saved['key'] != key
+                break
     return {'people': ordered, 'relations': relations}
 
 
@@ -438,7 +446,22 @@ def summarize(root: Path, work_id: str, base_url: str, person_id: str, page: int
     person = next((p for p in get(root, work_id, page, chapter, mode)['people'] if p['id'] == person_id), None)
     if person is None:
         raise NotesError('人物が見つかりません。再読み込みしてください')
-    if person['summary']:
+    _write_summary(root, work_id, base_url, person)
+
+
+def summarize_all(root: Path, work_id: str, base_url: str, page: int, *, cancel_check=None) -> None:
+    """主な人物の紹介文をまとめて作る(未作成と、情報が増えて古くなった分)。"""
+    todo = [p for p in get(root, work_id, page)['people']
+            if not p['minor'] and not p['thing'] and (not p['summary'] or p['summary_stale'])]
+    for i, person in enumerate(todo):
+        if cancel_check and cancel_check():
+            raise Cancelled()
+        set_progress(work_id, i, len(todo), 'notes')
+        _write_summary(root, work_id, base_url, person)
+
+
+def _write_summary(root: Path, work_id: str, base_url: str, person: dict) -> None:
+    if person['summary'] and not person['summary_stale']:
         return
     lines = [f'- {f["subject"]} → {f["target"]}: {f["description"]}' if f['target'] else f'- {f["description"]}'
              for f in person['facts'][:300]]
@@ -453,7 +476,8 @@ def summarize(root: Path, work_id: str, base_url: str, person_id: str, page: int
     folder, _, _ = _source(root, work_id)
     with _lock:
         data = _read(folder)
-        data['summaries'][person_id] = {'key': _summary_key(person), 'text': text}
+        data['summaries'][person['id']] = {'key': _summary_key(person), 'text': text,
+                                           'ids': [f['id'] for f in person['facts']]}
         _save(folder, data)
 
 

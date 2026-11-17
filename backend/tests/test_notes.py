@@ -192,6 +192,33 @@ class NotesTest(unittest.TestCase):
         notes.change(self.folder, 'book', {'names': ['花子'], 'person': False})
         self.assertEqual([p['name'] for p in notes.names(self.folder, 'book', 9)['people']], ['太郎'])
 
+    def test_bulk_summaries_stay_visible_as_reading_continues(self):
+        doc = {'pages_done': 12, 'blocks': [{'page': p, 'kind': 'p', 'md': f'主役は{p}番。'} for p in range(5)]
+               + [{'page': 0, 'kind': 'p', 'md': '脇役は通行人。'}]}
+        source = notes.units(doc)
+        valid = notes.validate_facts({'facts': [fact('主役', f'{p}番', f'主役は{p}番。', unit=p) for p in range(5)]
+                                      + [fact('脇役', '通行人', '脇役は通行人。', unit=5)]}, source)
+        notes._save(self.folder, {**self.data, 'units': {k: {'facts': v} for k, v in valid.items()}})
+        notes._source.return_value = (self.folder, self.book, doc)
+
+        def hero(page):
+            return next(p for p in notes.get(self.folder, 'book', page)['people'] if p['name'] == '主役')
+
+        with patch.object(notes.llm, 'chat', return_value='主役の紹介。') as chat:
+            notes.summarize_all(self.folder, 'book', 'unused', 2)
+            self.assertEqual(chat.call_count, 1)  # 登場の少ない脇役は対象外
+            self.assertNotIn('3番', chat.call_args.args[1][0]['content'])
+            notes.summarize_all(self.folder, 'book', 'unused', 2)
+            self.assertEqual(chat.call_count, 1)
+        self.assertEqual((hero(2)['summary'], hero(2)['summary_stale']), ('主役の紹介。', False))
+        # 読み進めて情報が増えても出し続け、前の位置では出さない。
+        self.assertEqual((hero(4)['summary'], hero(4)['summary_stale']), ('主役の紹介。', True))
+        self.assertEqual(hero(1)['summary'], '')
+        with patch.object(notes.llm, 'chat', return_value='新しい紹介。') as chat:
+            notes.summarize_all(self.folder, 'book', 'unused', 4)
+            self.assertEqual(chat.call_count, 1)
+        self.assertEqual((hero(4)['summary'], hero(4)['summary_stale']), ('新しい紹介。', False))
+
     def test_edits_survive_resume_and_changed_source_is_not_shown(self):
         original = self.data['units'][self.source[0]['key']]['facts'][0]
         notes.change(self.folder, 'book', {'fact_id': original['id'], 'description': '学生（訂正）'})

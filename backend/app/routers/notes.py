@@ -30,10 +30,15 @@ class Request(BaseModel):
     root: str
 
 
+class Create(Request):
+    # 読んでいる位置。主な人物の紹介文を、この位置で見えている情報から作る。
+    page: int = Field(0, ge=0)
+
+
 @router.post('/{work_id}/notes')
-def create_notes(work_id: str, body: Request):
+def create_notes(work_id: str, body: Create):
     try:
-        return jobs.enqueue(str(get_root(body.root)), work_id, 'notes')
+        return jobs.enqueue(str(get_root(body.root)), work_id, 'notes', extra={'page': body.page})
     except jobs.NotFound as e:
         raise HTTPException(404, str(e)) from e
 
